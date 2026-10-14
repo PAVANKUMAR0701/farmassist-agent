@@ -1,15 +1,19 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
+import { registerRecordExpense, type ToolDeps } from '../tools/record-expense.js';
 
 export const SERVER_NAME = 'farmassist-agent';
 export const SERVER_VERSION = '0.1.0';
 
+export type FarmServerDeps = ToolDeps;
+
 /**
  * Builds a fresh MCP server with all FarmAssist tools registered.
- * A new instance is created for every HTTP request because the server runs stateless (see http.ts).
+ * A new instance is created for every HTTP request because the server runs stateless (see http.ts);
+ * the dependencies (database client etc.) are created once and shared.
  */
-export function createFarmServer(): McpServer {
+export function createFarmServer(deps: FarmServerDeps): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
@@ -19,7 +23,6 @@ export function createFarmServer(): McpServer {
     },
   );
 
-  // Phase 0 placeholder: proves tools/list and tools/call work end to end. Real farm tools arrive in Phase 1.
   server.registerTool(
     'health_check',
     {
@@ -38,7 +41,7 @@ export function createFarmServer(): McpServer {
         status: 'ok' as const,
         serverVersion: SERVER_VERSION,
         farmTimeZone: FARM_TIME_ZONE,
-        todayInFarmTimeZone: todayInFarmTimeZone(),
+        todayInFarmTimeZone: todayInFarmTimeZone(deps.now()),
       };
       return {
         content: [{ type: 'text', text: JSON.stringify(result) }],
@@ -46,6 +49,8 @@ export function createFarmServer(): McpServer {
       };
     },
   );
+
+  registerRecordExpense(server, deps);
 
   return server;
 }

@@ -1,9 +1,13 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import { createFarmServer } from './server.js';
+import { authenticateBearer, type ApiTokenGrant } from '../auth/bearer.js';
+import { createFarmServer, type FarmServerDeps } from './server.js';
 
 export interface McpHttpConfig {
   /** Browser origins allowed to call the server. Requests without an Origin header (curl, MCP Inspector CLI) are allowed. */
   allowedOrigins: readonly string[];
+  /** Bearer tokens accepted by the server, each bound to one farm. */
+  apiTokens: readonly ApiTokenGrant[];
+  deps: FarmServerDeps;
 }
 
 function jsonRpcError(status: number, message: string, headers: Record<string, string> = {}): Response {
@@ -32,7 +36,13 @@ export async function handleMcpRequest(request: Request, config: McpHttpConfig):
     return jsonRpcError(405, 'Method not allowed: this MCP endpoint only accepts POST', { Allow: 'POST' });
   }
 
-  const server = createFarmServer();
+  // 401 without a WWW-Authenticate header: we have no OAuth metadata to point clients at (static bearer tokens only).
+  const authInfo = authenticateBearer(request.headers.get('authorization'), config.apiTokens);
+  if (!authInfo) {
+    return jsonRpcError(401, 'Unauthorized: missing or invalid bearer token');
+  }
+
+  const server = createFarmServer(config.deps);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -41,7 +51,7 @@ export async function handleMcpRequest(request: Request, config: McpHttpConfig):
     await server.connect(transport);
     // Accept/Content-Type checks, JSON-RPC parsing, 202 for notifications and the
     // MCP-Protocol-Version 400 check are all done by the SDK transport.
-    return await transport.handleRequest(request);
+    return await transport.handleRequest(request, { authInfo });
   } finally {
     await server.close();
   }

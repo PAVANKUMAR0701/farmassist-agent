@@ -1,25 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { handleMcpRequest } from '../../src/mcp/http.js';
+import { ALLOWED_ORIGIN, ENDPOINT, makeTestConfig, postJson } from '../helpers/mcp-http.js';
 
-const ENDPOINT = 'http://127.0.0.1:3000/mcp';
-const ALLOWED_ORIGIN = 'http://localhost:5173';
-const config = { allowedOrigins: [ALLOWED_ORIGIN] };
-
-const MCP_HEADERS = {
-  'Content-Type': 'application/json',
-  Accept: 'application/json, text/event-stream',
-};
-
-function post(body: unknown, headers: Record<string, string> = {}): Promise<Response> {
-  return handleMcpRequest(
-    new Request(ENDPOINT, {
-      method: 'POST',
-      headers: { ...MCP_HEADERS, ...headers },
-      body: typeof body === 'string' ? body : JSON.stringify(body),
-    }),
-    config,
-  );
-}
+const { config } = makeTestConfig();
+const post = (body: unknown, headers: Record<string, string> = {}) => postJson(config, body, headers);
 
 const initializeRequest = {
   jsonrpc: '2.0',
@@ -57,13 +41,15 @@ describe('Streamable HTTP transport (MCP 2025-11-25)', () => {
     expect(await res.text()).toBe('');
   });
 
-  it('tools/list includes health_check with an output schema', async () => {
+  it('tools/list includes health_check and record_expense with schemas', async () => {
     const res = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'MCP-Protocol-Version': '2025-11-25' });
     expect(res.status).toBe(200);
-    const body = await res.json();
-    const tool = body.result.tools.find((t: { name: string }) => t.name === 'health_check');
-    expect(tool).toBeDefined();
-    expect(tool.outputSchema).toBeDefined();
+    const { tools } = (await res.json()).result;
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).toEqual(expect.arrayContaining(['health_check', 'record_expense']));
+    const recordExpense = tools.find((t: { name: string }) => t.name === 'record_expense');
+    expect(recordExpense.inputSchema.required).toEqual(expect.arrayContaining(['amountRupees', 'category']));
+    expect(recordExpense.outputSchema).toBeDefined();
   });
 
   it('tools/call health_check returns structured content', async () => {
@@ -74,8 +60,7 @@ describe('Streamable HTTP transport (MCP 2025-11-25)', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.result.isError).toBeFalsy();
-    expect(body.result.structuredContent.status).toBe('ok');
-    expect(body.result.structuredContent.todayInFarmTimeZone).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(body.result.structuredContent).toMatchObject({ status: 'ok', todayInFarmTimeZone: '2026-10-14' });
   });
 
   it('rejects an unsupported MCP-Protocol-Version header with 400', async () => {
@@ -115,5 +100,23 @@ describe('Streamable HTTP transport (MCP 2025-11-25)', () => {
   it('allows a request from an allowed Origin', async () => {
     const res = await post(initializeRequest, { Origin: ALLOWED_ORIGIN });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('Bearer authentication', () => {
+  it('returns 401 without a WWW-Authenticate header when the token is missing', async () => {
+    const res = await post(initializeRequest, { Authorization: '' });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toBeNull();
+  });
+
+  it('returns 401 for a wrong token', async () => {
+    const res = await post(initializeRequest, { Authorization: 'Bearer wrong-token-wrong-token-wrong-token' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 for a non-Bearer scheme', async () => {
+    const res = await post(initializeRequest, { Authorization: 'Basic dXNlcjpwYXNz' });
+    expect(res.status).toBe(401);
   });
 });

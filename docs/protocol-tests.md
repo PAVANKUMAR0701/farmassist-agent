@@ -48,4 +48,33 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:3000/mcp --transport 
 
 Both returned the expected tool list and `structuredContent` (`"status":"ok"`, `"todayInFarmTimeZone":"2026-10-14"`).
 
+## Recorded result: local server with bearer auth and `record_expense`, 2026-10-14
+
+```
+PASS  initialize  (HTTP 200, expected 200)
+PASS  notifications/initialized -> 202  (HTTP 202, expected 202)
+PASS  tools/list  (HTTP 200, expected 200)
+PASS  tools/call record_expense  (HTTP 200, expected 200)
+PASS  tools/call record_expense again (same clientRequestId) -> duplicate  (HTTP 200, expected 200)
+PASS  tools/call record_expense invalid category -> isError  (HTTP 200, expected 200)
+PASS  missing bearer token -> 401  (HTTP 401, expected 401)
+PASS  GET -> 405  (HTTP 405, expected 405)
+PASS  DELETE -> 405  (HTTP 405, expected 405)
+PASS  bad Origin -> 403  (HTTP 403, expected 403)
+PASS  unsupported MCP-Protocol-Version -> 400  (HTTP 400, expected 400)
+PASS  Accept without text/event-stream -> 406  (HTTP 406, expected 406)
+
+12/12 checks passed
+```
+
+Over the network, every request now needs `Authorization: Bearer <token>`. Without it the server returns 401 with no `WWW-Authenticate` header. Order of checks: Origin (403), then method (405), then auth (401), then the SDK transport.
+
+MCP Inspector, with the token:
+
+```bash
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:3000/mcp --transport http --header "Authorization: Bearer <token>" --method tools/call --tool-name record_expense --tool-arg amountRupees=800 --tool-arg category=medicine --tool-arg "note=cow medicine"
+```
+
+Result: `"amountPaise": 80000, "amountDisplay": "₹800.00", "duplicate": false`.
+
 The deployed AWS endpoint has not been tested yet; that comes in Phase 2.

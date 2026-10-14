@@ -32,6 +32,7 @@ Severity: **low** (annoying), **medium** (cost real time), **high** (forced a de
   - `global.anthropic.claude-haiku-5-5`: `AccessDeniedException ... is not available for this account`.
   - `global.amazon.nova-2-lite-v1:0`: `ThrottlingException: Too many tokens per day`. Service Quotas shows `Global cross-region model inference tokens per day for Amazon Nova 2 Lite = 0`, marked not adjustable. Most per-day token quotas on this account are 0.
   - `in.anthropic.claude-haiku-4-5-20251001-v1:0`: `ResourceNotFoundException: Model use case details have not been submitted for this account`.
+- **Update 2026-10-14 approx. 18:25:** Submitted the Anthropic use-case form (Bedrock console → Model catalog → Claude Haiku 5.5). About 15 minutes later Claude Haiku 4.5 moved on to the next error: `ThrottlingException: Too many tokens per day`. Service Quotas shows its cross-region requests/tokens per minute as **0 (adjustable)**. Haiku 5.5 still says "not available for this account".
 - **Severity:** medium (open; Bedrock work is scheduled for Oct 17)
 - **Workaround:** Submit the Anthropic use-case form in the Bedrock console; open an AWS Support quota case if needed; mock Bedrock in unit tests (as the hackathon FAQ suggests).
 - **Suggestion:** One page listing everything a new account must do before its first Bedrock call (verification, use-case form, per-day quotas). The three errors arrived one after another.
