@@ -7,12 +7,17 @@ import {
   type DynamoDBDocumentClient,
   type QueryCommandInput,
 } from '@aws-sdk/lib-dynamodb';
+import { ulid } from 'ulid';
 import { newActivityEntryId, type ActivityType, type FarmActivity, type NewActivity } from '../domain/activity.js';
+import type { CorrectionRecord } from '../domain/correction.js';
 import { parseEntryId } from '../domain/entry-id.js';
-import { newExpenseEntryId, type ExpenseCategory, type ExpenseEntry, type NewExpense } from '../domain/expense.js';
+import { newExpenseEntryId, parseExpenseEntryId, type ExpenseCategory, type ExpenseEntry, type NewExpense } from '../domain/expense.js';
 import { decodeCursor, encodeCursor } from './cursor.js';
 import {
+  ConcurrentModificationError,
+  EntryNotFoundError,
   IdempotencyConflictError,
+  type CorrectExpenseInput,
   MAX_SUMMARY_ENTRIES,
   TooManyEntriesError,
   type CreateExpenseResult,
@@ -32,6 +37,7 @@ const IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
  *   expense:      PK = FARM#<farmId>   SK = EXP#<date>#<ulid>
  *   activity:     PK = FARM#<farmId>   SK = ACT#<date>#<ulid>
  *   idempotency:  PK = FARM#<farmId>   SK = IDEM#<clientRequestId>   (points at the entry it created)
+ *   correction:   PK = FARM#<farmId>   SK = CORR#<entryId>#<ulid>     (audit: before/after of one correction)
  * Date-ordered sort keys let one Query fetch a farm's entries for any date range.
  */
 export const keys = {
@@ -39,6 +45,7 @@ export const keys = {
   expense: (date: string, id: string) => `EXP#${date}#${id}`,
   activity: (date: string, id: string) => `ACT#${date}#${id}`,
   idempotency: (clientRequestId: string) => `IDEM#${clientRequestId}`,
+  correction: (entryId: string, id: string) => `CORR#${entryId}#${id}`,
   /** Inclusive SK bounds for a date range. "~" sorts after every ULID character. */
   range: (prefix: 'EXP' | 'ACT', from: string, to: string) => ({ lo: `${prefix}#${from}#`, hi: `${prefix}#${to}#~` }),
 };
@@ -176,6 +183,99 @@ export class DynamoLedgerRepository implements LedgerRepository {
 
   async getAllExpenses(query: ExpenseRangeQuery): Promise<ExpenseEntry[]> {
     return (await this.queryAll<ExpenseItem>(this.expenseRangeQuery(query))).map(toExpense);
+  }
+
+  async getExpense(farmId: string, entryId: string): Promise<ExpenseEntry | undefined> {
+    const parsed = parseExpenseEntryId(entryId);
+    if (!parsed) return undefined;
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: keys.farm(farmId), SK: keys.expense(parsed.date, parsed.ulid) },
+        ConsistentRead: true,
+      }),
+    );
+    return result.Item ? toExpense(result.Item as ExpenseItem) : undefined;
+  }
+
+  async correctExpense(input: CorrectExpenseInput): Promise<{ entry: ExpenseEntry; correction: CorrectionRecord }> {
+    const parsed = parseExpenseEntryId(input.entryId);
+    if (!parsed) throw new EntryNotFoundError(input.entryId);
+    const key = { PK: keys.farm(input.farmId), SK: keys.expense(parsed.date, parsed.ulid) };
+    const correctedAt = this.now().toISOString();
+    const correction: CorrectionRecord = {
+      correctionId: ulid(),
+      farmId: input.farmId,
+      entryId: input.entryId,
+      before: input.before,
+      after: input.after,
+      changedFields: input.changedFields,
+      ...(input.reason ? { reason: input.reason } : {}),
+      correctedAt,
+      fromVersion: input.expectedVersion,
+      toVersion: input.expectedVersion + 1,
+    };
+
+    const set = ['#amountPaise = :amountPaise', '#category = :category', '#updatedAt = :updatedAt', '#version = :toVersion'];
+    if (input.after.note) set.push('#note = :note');
+    try {
+      await this.client.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              // Optimistic locking: only update if nobody else changed the entry since we read it.
+              Update: {
+                TableName: this.tableName,
+                Key: key,
+                UpdateExpression: `SET ${set.join(', ')}${input.after.note ? '' : ' REMOVE #note'}`,
+                ConditionExpression: 'attribute_exists(PK) AND #version = :fromVersion',
+                ExpressionAttributeNames: {
+                  '#amountPaise': 'amountPaise',
+                  '#category': 'category',
+                  '#note': 'note',
+                  '#updatedAt': 'updatedAt',
+                  '#version': 'version',
+                },
+                ExpressionAttributeValues: {
+                  ':amountPaise': input.after.amountPaise,
+                  ':category': input.after.category,
+                  ':updatedAt': correctedAt,
+                  ':fromVersion': input.expectedVersion,
+                  ':toVersion': input.expectedVersion + 1,
+                  ...(input.after.note ? { ':note': input.after.note } : {}),
+                },
+              },
+            },
+            {
+              Put: {
+                TableName: this.tableName,
+                Item: { PK: key.PK, SK: keys.correction(input.entryId, correction.correctionId), type: 'CORRECTION', ...correction },
+                ConditionExpression: 'attribute_not_exists(PK)',
+              },
+            },
+          ],
+        }),
+      );
+    } catch (error) {
+      const conditionFailed =
+        error instanceof TransactionCanceledException && error.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
+      if (!conditionFailed) throw error;
+      const current = await this.getExpense(input.farmId, input.entryId);
+      throw current ? new ConcurrentModificationError(input.entryId) : new EntryNotFoundError(input.entryId);
+    }
+
+    const entry = await this.getExpense(input.farmId, input.entryId);
+    if (!entry) throw new EntryNotFoundError(input.entryId);
+    return { entry, correction };
+  }
+
+  async getCorrections(farmId: string, entryId: string): Promise<CorrectionRecord[]> {
+    const items = await this.queryAll<CorrectionRecord & { PK?: string; SK?: string; type?: string }>({
+      TableName: this.tableName,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+      ExpressionAttributeValues: { ':pk': keys.farm(farmId), ':prefix': `CORR#${entryId}#` },
+    });
+    return items.map(({ PK: _pk, SK: _sk, type: _type, ...record }) => record);
   }
 
   async getActivities(query: DateRangeQuery): Promise<FarmActivity[]> {

@@ -1,9 +1,14 @@
+import { ulid } from 'ulid';
 import { newActivityEntryId, type FarmActivity, type NewActivity } from '../domain/activity.js';
+import type { CorrectionRecord } from '../domain/correction.js';
 import { parseEntryId } from '../domain/entry-id.js';
 import { newExpenseEntryId, type ExpenseEntry, type NewExpense } from '../domain/expense.js';
 import { decodeCursor, encodeCursor } from './cursor.js';
 import {
+  ConcurrentModificationError,
+  EntryNotFoundError,
   IdempotencyConflictError,
+  type CorrectExpenseInput,
   MAX_SUMMARY_ENTRIES,
   TooManyEntriesError,
   type CreateExpenseResult,
@@ -25,6 +30,7 @@ const position = (entry: { date: string; entryId: string }) => `${entry.date}#${
 export class InMemoryLedgerRepository implements LedgerRepository {
   readonly expenses = new Map<string, ExpenseEntry>();
   readonly activities = new Map<string, FarmActivity>();
+  readonly corrections: CorrectionRecord[] = [];
   private readonly idempotency = new Map<string, { entryId: string; fingerprint: string }>();
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -77,6 +83,47 @@ export class InMemoryLedgerRepository implements LedgerRepository {
     const items = this.matchingExpenses(query);
     if (items.length > MAX_SUMMARY_ENTRIES) throw new TooManyEntriesError();
     return items.map((e) => structuredClone(e));
+  }
+
+  async getExpense(farmId: string, entryId: string): Promise<ExpenseEntry | undefined> {
+    const entry = this.expenses.get(entryId);
+    return entry && entry.farmId === farmId ? structuredClone(entry) : undefined;
+  }
+
+  async correctExpense(input: CorrectExpenseInput): Promise<{ entry: ExpenseEntry; correction: CorrectionRecord }> {
+    const current = this.expenses.get(input.entryId);
+    if (!current || current.farmId !== input.farmId) throw new EntryNotFoundError(input.entryId);
+    if (current.version !== input.expectedVersion) throw new ConcurrentModificationError(input.entryId);
+
+    const correctedAt = this.now().toISOString();
+    const { note: _oldNote, ...withoutNote } = current;
+    const updated: ExpenseEntry = {
+      ...withoutNote,
+      amountPaise: input.after.amountPaise,
+      category: input.after.category,
+      ...(input.after.note ? { note: input.after.note } : {}),
+      updatedAt: correctedAt,
+      version: current.version + 1,
+    };
+    const correction: CorrectionRecord = {
+      correctionId: ulid(),
+      farmId: input.farmId,
+      entryId: input.entryId,
+      before: input.before,
+      after: input.after,
+      changedFields: input.changedFields,
+      ...(input.reason ? { reason: input.reason } : {}),
+      correctedAt,
+      fromVersion: current.version,
+      toVersion: updated.version,
+    };
+    this.expenses.set(input.entryId, updated);
+    this.corrections.push(correction);
+    return { entry: structuredClone(updated), correction: structuredClone(correction) };
+  }
+
+  async getCorrections(farmId: string, entryId: string): Promise<CorrectionRecord[]> {
+    return this.corrections.filter((c) => c.farmId === farmId && c.entryId === entryId).map((c) => structuredClone(c));
   }
 
   async getActivities(query: DateRangeQuery): Promise<FarmActivity[]> {

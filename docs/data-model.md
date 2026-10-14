@@ -7,8 +7,7 @@ One DynamoDB table, on-demand capacity. Every item for a farm shares one partiti
 | Expense | `FARM#<farmId>` | `EXP#<YYYY-MM-DD>#<ULID>` | `entryId`, `date`, `category`, `amountPaise`, `note`, `createdAt`, `updatedAt`, `version` |
 | Activity | `FARM#<farmId>` | `ACT#<YYYY-MM-DD>#<ULID>` | `entryId`, `date`, `activityType`, `animalOrField`, `note`, `createdAt`, `updatedAt`, `version` |
 | Idempotency marker | `FARM#<farmId>` | `IDEM#<clientRequestId>` | `entryId`, `entrySK`, `fingerprint`, `expiresAt` (TTL, 7 days) |
-
-Correction audit records will be added with `correct_entry`.
+| Correction (audit) | `FARM#<farmId>` | `CORR#<entryId>#<ULID>` | `correctionId`, `before`, `after`, `changedFields`, `reason`, `correctedAt`, `fromVersion`, `toVersion` |
 
 Entry ids are `exp_<YYYYMMDD>_<ULID>` for expenses and `act_<YYYYMMDD>_<ULID>` for activities.
 
@@ -32,6 +31,14 @@ Amounts are stored as **integer paise** (`amountPaise`). Rupees appear only in t
 With a `clientRequestId`, the entry (expense or activity) and its `IDEM#` marker are written in **one `TransactWriteItems`**, both conditional on `attribute_not_exists(PK)`. A retry finds the marker:
 - **same fingerprint** (same kind and same arguments as sent) → returns the original entry with `duplicate: true`, writes nothing;
 - **different fingerprint** → rejected, because the id was reused for a different request (including an expense id reused for an activity).
+
+## Corrections
+
+`correct_entry` changes an expense **in place**, so totals immediately use the corrected value. It also writes an audit record, so the original value is never lost. Both happen in one `TransactWriteItems`:
+1. `Update` of the expense, conditional on `attribute_exists(PK) AND version = <version we read>` (optimistic locking). If another request changed the entry in between, the whole transaction fails and nothing is saved.
+2. `Put` of a `CORR#<entryId>#<ULID>` item with the before/after values.
+
+Without an `entryId`, the tool only acts when exactly one expense matches the date (and category). If several match, it changes nothing and returns `needs_clarification` with the candidates, so the farmer is asked rather than the model guessing. Activities cannot be corrected yet.
 
 ## Tenant isolation
 

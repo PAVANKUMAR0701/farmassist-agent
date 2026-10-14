@@ -1,4 +1,5 @@
 import type { FarmActivity, NewActivity } from '../domain/activity.js';
+import type { CorrectableField, CorrectionRecord, ExpenseSnapshot } from '../domain/correction.js';
 import type { ExpenseCategory, ExpenseEntry, NewExpense } from '../domain/expense.js';
 
 /** Optional duplicate protection: the same clientRequestId + fingerprint returns the original entry instead of writing again. */
@@ -47,9 +48,44 @@ export interface LedgerRepository {
   /** Every expense in a date range (for summaries). Throws TooManyEntriesError above MAX_SUMMARY_ENTRIES. */
   getAllExpenses(query: ExpenseRangeQuery): Promise<ExpenseEntry[]>;
 
+  /** Strongly consistent read of one expense, or undefined if it does not exist for this farm. */
+  getExpense(farmId: string, entryId: string): Promise<ExpenseEntry | undefined>;
+  /**
+   * Updates an expense and writes its audit record atomically, only if the stored version still equals
+   * expectedVersion. Throws EntryNotFoundError or ConcurrentModificationError otherwise.
+   */
+  correctExpense(input: CorrectExpenseInput): Promise<{ entry: ExpenseEntry; correction: CorrectionRecord }>;
+  /** Audit trail for one expense, oldest first. */
+  getCorrections(farmId: string, entryId: string): Promise<CorrectionRecord[]>;
+
   createActivity(input: NewActivity, idempotency?: Idempotency): Promise<CreateResult<FarmActivity>>;
   /** Every activity in a date range, oldest first. Throws TooManyEntriesError above MAX_SUMMARY_ENTRIES. */
   getActivities(query: DateRangeQuery): Promise<FarmActivity[]>;
+}
+
+export interface CorrectExpenseInput {
+  farmId: string;
+  entryId: string;
+  expectedVersion: number;
+  before: ExpenseSnapshot;
+  after: ExpenseSnapshot;
+  changedFields: CorrectableField[];
+  reason?: string | undefined;
+}
+
+export class EntryNotFoundError extends Error {
+  constructor(entryId: string) {
+    super(`no entry with id ${entryId} was found for this farm`);
+    this.name = 'EntryNotFoundError';
+  }
+}
+
+/** The entry changed between reading it and saving the correction. */
+export class ConcurrentModificationError extends Error {
+  constructor(entryId: string) {
+    super(`entry ${entryId} was changed by another request at the same time; nothing was saved, please check it and try again`);
+    this.name = 'ConcurrentModificationError';
+  }
 }
 
 /** The same clientRequestId was reused for a request with different details. */

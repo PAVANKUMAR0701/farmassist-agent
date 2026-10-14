@@ -3,7 +3,12 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactW
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DynamoLedgerRepository } from '../../src/repositories/dynamodb-ledger-repository.js';
-import { IdempotencyConflictError, TooManyEntriesError } from '../../src/repositories/ledger-repository.js';
+import {
+  ConcurrentModificationError,
+  EntryNotFoundError,
+  IdempotencyConflictError,
+  TooManyEntriesError,
+} from '../../src/repositories/ledger-repository.js';
 
 // These tests check the exact DynamoDB requests we build (keys, conditions, atomicity).
 // Real conditional-write behaviour is verified against a deployed table in the integration tests (Phase 2).
@@ -199,5 +204,69 @@ describe('DynamoLedgerRepository activities', () => {
     const input = ddb.commandCalls(QueryCommand)[0]!.args[0].input;
     expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'FARM#farm-1', ':lo': 'ACT#2026-10-14#', ':hi': 'ACT#2026-10-14#~' });
     expect(input.ScanIndexForward).toBeUndefined(); // DynamoDB default: ascending
+  });
+});
+
+describe('DynamoLedgerRepository corrections', () => {
+  const entryId = `exp_20261014_${U(7)}`;
+  const sk = `EXP#2026-10-14#${U(7)}`;
+  const correctionInput = {
+    farmId: 'farm-1',
+    entryId,
+    expectedVersion: 1,
+    before: { amountPaise: 80000, category: 'medicine' as const, note: 'cow' },
+    after: { amountPaise: 90000, category: 'medicine' as const },
+    changedFields: ['amountPaise' as const, 'note' as const],
+    reason: 'it was 900',
+  };
+
+  it('updates with a version condition and writes the audit record in the same transaction', async () => {
+    ddb.on(TransactWriteCommand).resolves({});
+    ddb.on(GetCommand).resolves({ Item: { ...item('2026-10-14', U(7), 'medicine', 90000), version: 2 } });
+    const { entry, correction } = await repo.correctExpense(correctionInput);
+
+    const [update, audit] = ddb.commandCalls(TransactWriteCommand)[0]!.args[0].input.TransactItems!;
+    expect(update!.Update!.Key).toEqual({ PK: 'FARM#farm-1', SK: sk });
+    expect(update!.Update!.ConditionExpression).toBe('attribute_exists(PK) AND #version = :fromVersion');
+    expect(update!.Update!.UpdateExpression).toBe(
+      'SET #amountPaise = :amountPaise, #category = :category, #updatedAt = :updatedAt, #version = :toVersion REMOVE #note',
+    );
+    expect(update!.Update!.ExpressionAttributeValues).toMatchObject({ ':amountPaise': 90000, ':fromVersion': 1, ':toVersion': 2 });
+    expect(audit!.Put!.Item).toMatchObject({
+      PK: 'FARM#farm-1',
+      type: 'CORRECTION',
+      entryId,
+      before: { amountPaise: 80000, note: 'cow' },
+      after: { amountPaise: 90000 },
+      fromVersion: 1,
+      toVersion: 2,
+    });
+    expect(audit!.Put!.Item!.SK).toBe(`CORR#${entryId}#${correction.correctionId}`);
+    expect(entry.version).toBe(2);
+  });
+
+  it('maps a failed version condition to ConcurrentModificationError when the entry still exists', async () => {
+    ddb.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({ message: 'x', $metadata: {}, CancellationReasons: [{ Code: 'ConditionalCheckFailed' }, { Code: 'None' }] }),
+    );
+    ddb.on(GetCommand).resolves({ Item: { ...item('2026-10-14', U(7)), version: 2 } });
+    await expect(repo.correctExpense(correctionInput)).rejects.toBeInstanceOf(ConcurrentModificationError);
+  });
+
+  it('maps a failed condition to EntryNotFoundError when the entry is gone', async () => {
+    ddb.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({ message: 'x', $metadata: {}, CancellationReasons: [{ Code: 'ConditionalCheckFailed' }, { Code: 'None' }] }),
+    );
+    ddb.on(GetCommand).resolves({});
+    await expect(repo.correctExpense(correctionInput)).rejects.toBeInstanceOf(EntryNotFoundError);
+  });
+
+  it('getCorrections reads only this entry\'s CORR# records and strips key attributes', async () => {
+    ddb.on(QueryCommand).resolves({ Items: [{ PK: 'FARM#farm-1', SK: `CORR#${entryId}#X`, type: 'CORRECTION', correctionId: 'X', entryId }] });
+    const records = await repo.getCorrections('farm-1', entryId);
+    const input = ddb.commandCalls(QueryCommand)[0]!.args[0].input;
+    expect(input.KeyConditionExpression).toBe('PK = :pk AND begins_with(SK, :prefix)');
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'FARM#farm-1', ':prefix': `CORR#${entryId}#` });
+    expect(records).toEqual([{ correctionId: 'X', entryId }]);
   });
 });

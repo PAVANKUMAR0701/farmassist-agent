@@ -27,11 +27,20 @@ const afterInit = { ...base, 'MCP-Protocol-Version': VERSION };
 
 interface Check {
   name: string;
-  init: RequestInit;
+  /** A function when the request depends on an earlier response (e.g. an entryId). */
+  init: RequestInit | (() => RequestInit);
   expectStatus: number;
   /** Optional extra assertion on the parsed JSON body. */
   expectBody?: (body: any) => boolean;
 }
+
+/** Values captured from earlier responses. */
+const state: { medicineEntryId?: string } = {};
+const toolCall = (id: number, name: string, args: object): RequestInit => ({
+  method: 'POST',
+  headers: afterInit,
+  body: rpc({ id, method: 'tools/call', params: { name, arguments: args } }),
+});
 
 const rpc = (body: object) => JSON.stringify({ jsonrpc: '2.0', ...body });
 const runId = `smoke-${Date.now()}`;
@@ -110,6 +119,24 @@ const checks: Check[] = [
     expectBody: (b) => b.result?.structuredContent?.activity?.entryId?.startsWith('act_') && b.result.structuredContent.duplicate === false,
   },
   {
+    name: 'tools/call record_expense ₹800 medicine',
+    init: toolCall(12, 'record_expense', { amountRupees: 800, category: 'medicine', note: 'smoke test correction' }),
+    expectStatus: 200,
+    expectBody: (b) => {
+      state.medicineEntryId = b.result?.structuredContent?.entry?.entryId;
+      return b.result?.structuredContent?.entry?.amountPaise === 80000;
+    },
+  },
+  {
+    name: 'tools/call correct_entry ₹800 -> ₹900 (before/after)',
+    init: () => toolCall(13, 'correct_entry', { entryId: state.medicineEntryId, newAmountRupees: 900, reason: 'smoke test' }),
+    expectStatus: 200,
+    expectBody: (b) => {
+      const s = b.result?.structuredContent;
+      return s?.status === 'corrected' && s.before.amountPaise === 80000 && s.after.amountPaise === 90000;
+    },
+  },
+  {
     name: 'tools/call record_expense invalid category -> isError',
     init: {
       method: 'POST',
@@ -146,7 +173,7 @@ const checks: Check[] = [
 let failures = 0;
 console.log(`MCP protocol smoke test against ${url}\n`);
 for (const check of checks) {
-  const res = await fetch(url, check.init);
+  const res = await fetch(url, typeof check.init === 'function' ? check.init() : check.init);
   const text = await res.text();
   let ok = res.status === check.expectStatus;
   if (ok && check.expectBody) {
