@@ -1,10 +1,20 @@
+import type { FarmActivity, NewActivity } from '../domain/activity.js';
 import type { ExpenseCategory, ExpenseEntry, NewExpense } from '../domain/expense.js';
 
-export interface CreateExpenseResult {
-  entry: ExpenseEntry;
+/** Optional duplicate protection: the same clientRequestId + fingerprint returns the original entry instead of writing again. */
+export interface Idempotency {
+  clientRequestId: string;
+  /** Hash of the request as sent, including its kind, so an id reused for a different request is detected. */
+  fingerprint: string;
+}
+
+export interface CreateResult<T> {
+  entry: T;
   /** True when this call replayed an earlier request with the same clientRequestId; nothing new was written. */
   duplicate: boolean;
 }
+
+export type CreateExpenseResult = CreateResult<ExpenseEntry>;
 
 export interface ExpenseRangeQuery {
   farmId: string;
@@ -14,28 +24,38 @@ export interface ExpenseRangeQuery {
   category?: ExpenseCategory | undefined;
 }
 
+export interface DateRangeQuery {
+  farmId: string;
+  from: string;
+  to: string;
+}
+
 export interface ExpensePage {
   /** Newest first (by date, then by recording time). */
   items: ExpenseEntry[];
   nextCursor?: string;
 }
 
-/** Safety cap on how many entries one summary may read. A small farm records far fewer in a year. */
+/** Safety cap on how many entries one read may return. A small farm records far fewer in a year. */
 export const MAX_SUMMARY_ENTRIES = 10_000;
 
 /** Persistence port for the farm ledger. Implemented by DynamoDB in AWS and in memory for local runs and tests. */
 export interface LedgerRepository {
-  createExpense(input: NewExpense, idempotency?: { clientRequestId: string; fingerprint: string }): Promise<CreateExpenseResult>;
+  createExpense(input: NewExpense, idempotency?: Idempotency): Promise<CreateExpenseResult>;
   /** One page of expenses in a date range. Throws InvalidCursorError for a tampered or mismatched cursor. */
   listExpenses(query: ExpenseRangeQuery & { limit: number; cursor?: string | undefined }): Promise<ExpensePage>;
   /** Every expense in a date range (for summaries). Throws TooManyEntriesError above MAX_SUMMARY_ENTRIES. */
   getAllExpenses(query: ExpenseRangeQuery): Promise<ExpenseEntry[]>;
+
+  createActivity(input: NewActivity, idempotency?: Idempotency): Promise<CreateResult<FarmActivity>>;
+  /** Every activity in a date range, oldest first. Throws TooManyEntriesError above MAX_SUMMARY_ENTRIES. */
+  getActivities(query: DateRangeQuery): Promise<FarmActivity[]>;
 }
 
 /** The same clientRequestId was reused for a request with different details. */
 export class IdempotencyConflictError extends Error {
   constructor(clientRequestId: string) {
-    super(`clientRequestId "${clientRequestId}" was already used for a different expense`);
+    super(`clientRequestId "${clientRequestId}" was already used for a different request`);
     this.name = 'IdempotencyConflictError';
   }
 }

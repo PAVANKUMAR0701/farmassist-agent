@@ -1,12 +1,19 @@
-import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { farmIdFromAuth } from '../auth/bearer.js';
 import { EXPENSE_CATEGORIES } from '../domain/expense.js';
 import { IdempotencyConflictError } from '../repositories/ledger-repository.js';
 import { hasAtMostTwoDecimals, MAX_ENTRY_RUPEES, rupeesToPaise } from '../shared/money.js';
-import { isValidIsoDate, todayInFarmTimeZone } from '../shared/time.js';
-import { entryViewSchema, toEntryView, type ToolDeps } from './shared.js';
+import { todayInFarmTimeZone } from '../shared/time.js';
+import {
+  clientRequestIdInput,
+  entryDateInput,
+  entryViewSchema,
+  idempotencyFor,
+  resolveEntryDate,
+  toEntryView,
+  type ToolDeps,
+} from './shared.js';
 import { runTool, ToolUserError } from './tool-errors.js';
 
 const inputSchema = {
@@ -20,15 +27,8 @@ const inputSchema = {
     .enum(EXPENSE_CATEGORIES)
     .describe('Expense category. If the farmer\'s words do not clearly fit one category, ask them instead of guessing.'),
   note: z.string().trim().max(200).optional().describe('Short description in the farmer\'s words, e.g. "cattle feed, 2 bags".'),
-  date: z
-    .string()
-    .optional()
-    .describe('Date of the expense as YYYY-MM-DD in India time. Omit for today.'),
-  clientRequestId: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{8,64}$/, 'clientRequestId must be 8-64 letters, digits, "-" or "_"')
-    .optional()
-    .describe('Unique id for this request. Retrying with the same id never creates a second entry.'),
+  date: entryDateInput,
+  clientRequestId: clientRequestIdInput,
 };
 
 const outputSchema = {
@@ -51,22 +51,10 @@ export function registerRecordExpense(server: McpServer, deps: ToolDeps): void {
     async (args, extra) =>
       runTool('record_expense', async () => {
         const farmId = farmIdFromAuth(extra.authInfo);
-        const today = todayInFarmTimeZone(deps.now());
-        const date = args.date ?? today;
-        if (!isValidIsoDate(date)) throw new ToolUserError(`date "${date}" is not a real calendar date in YYYY-MM-DD format`);
-        if (date > today) throw new ToolUserError(`date ${date} is in the future (today in India is ${today})`);
-
+        const date = resolveEntryDate(args.date, todayInFarmTimeZone(deps.now()));
         const amountPaise = rupeesToPaise(args.amountRupees);
         const note = args.note || undefined;
-        const idempotency = args.clientRequestId
-          ? {
-              clientRequestId: args.clientRequestId,
-              // Fingerprint the request as sent (date as given, not as resolved) so a retry after midnight still matches.
-              fingerprint: createHash('sha256')
-                .update(JSON.stringify([amountPaise, args.category, note ?? null, args.date ?? null]))
-                .digest('hex'),
-            }
-          : undefined;
+        const idempotency = idempotencyFor(args.clientRequestId, 'expense', [amountPaise, args.category, note ?? null, args.date ?? null]);
 
         let result;
         try {

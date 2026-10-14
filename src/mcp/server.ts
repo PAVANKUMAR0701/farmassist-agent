@@ -4,6 +4,7 @@ import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
 import { registerGetExpenseSummary } from '../tools/get-expense-summary.js';
 import { registerListExpenses } from '../tools/list-expenses.js';
 import { registerRecordExpense } from '../tools/record-expense.js';
+import { registerRecordFarmActivity } from '../tools/record-farm-activity.js';
 import type { ToolDeps } from '../tools/shared.js';
 
 export const SERVER_NAME = 'farmassist-agent';
@@ -56,6 +57,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   registerRecordExpense(server, deps);
   registerListExpenses(server, deps);
   registerGetExpenseSummary(server, deps);
+  registerRecordFarmActivity(server, deps);
 
   return server;
 }

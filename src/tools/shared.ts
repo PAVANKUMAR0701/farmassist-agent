@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { EXPENSE_CATEGORIES, type ExpenseEntry } from '../domain/expense.js';
 import type { LedgerRepository } from '../repositories/ledger-repository.js';
@@ -8,6 +9,31 @@ import { ToolUserError } from './tool-errors.js';
 export interface ToolDeps {
   ledger: LedgerRepository;
   now: () => Date;
+}
+
+export const entryDateInput = z.string().optional().describe('Date as YYYY-MM-DD in India time. Omit for today.');
+
+export const clientRequestIdInput = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{8,64}$/, 'clientRequestId must be 8-64 letters, digits, "-" or "_"')
+  .optional()
+  .describe('Unique id for this request. Retrying with the same id never creates a second entry.');
+
+/** Validates the date of a new entry: a real calendar date, not in the future. Omitted means today (India time). */
+export function resolveEntryDate(date: string | undefined, today: string): string {
+  const resolved = date ?? today;
+  if (!isValidIsoDate(resolved)) throw new ToolUserError(`date "${resolved}" is not a real calendar date in YYYY-MM-DD format`);
+  if (resolved > today) throw new ToolUserError(`date ${resolved} is in the future (today in India is ${today})`);
+  return resolved;
+}
+
+/**
+ * Builds idempotency info for a write. The fingerprint covers the request kind and the arguments *as sent*
+ * (an omitted date stays omitted), so a retry after midnight still matches the original request.
+ */
+export function idempotencyFor(clientRequestId: string | undefined, kind: string, sentArgs: readonly unknown[]) {
+  if (!clientRequestId) return undefined;
+  return { clientRequestId, fingerprint: createHash('sha256').update(JSON.stringify([kind, ...sentArgs])).digest('hex') };
 }
 
 /** Longest range one request may cover. Keeps reads (and cost) bounded. */

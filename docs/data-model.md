@@ -5,9 +5,12 @@ One DynamoDB table, on-demand capacity. Every item for a farm shares one partiti
 | Item | PK | SK | Main attributes |
 |---|---|---|---|
 | Expense | `FARM#<farmId>` | `EXP#<YYYY-MM-DD>#<ULID>` | `entryId`, `date`, `category`, `amountPaise`, `note`, `createdAt`, `updatedAt`, `version` |
-| Idempotency marker | `FARM#<farmId>` | `IDEM#<clientRequestId>` | `entryId`, `expenseSK`, `fingerprint`, `expiresAt` (TTL, 7 days) |
+| Activity | `FARM#<farmId>` | `ACT#<YYYY-MM-DD>#<ULID>` | `entryId`, `date`, `activityType`, `animalOrField`, `note`, `createdAt`, `updatedAt`, `version` |
+| Idempotency marker | `FARM#<farmId>` | `IDEM#<clientRequestId>` | `entryId`, `entrySK`, `fingerprint`, `expiresAt` (TTL, 7 days) |
 
-Activities (`ACT#…`) and correction audit records will be added in the next steps.
+Correction audit records will be added with `correct_entry`.
+
+Entry ids are `exp_<YYYYMMDD>_<ULID>` for expenses and `act_<YYYYMMDD>_<ULID>` for activities.
 
 ## Why this shape
 
@@ -26,9 +29,9 @@ Amounts are stored as **integer paise** (`amountPaise`). Rupees appear only in t
 
 ## Idempotency
 
-With a `clientRequestId`, the expense and its `IDEM#` marker are written in **one `TransactWriteItems`**, both conditional on `attribute_not_exists(PK)`. A retry finds the marker:
-- **same fingerprint** (same amount, category, note and date as sent) → returns the original entry with `duplicate: true`, writes nothing;
-- **different fingerprint** → rejected, because the id was reused for a different expense.
+With a `clientRequestId`, the entry (expense or activity) and its `IDEM#` marker are written in **one `TransactWriteItems`**, both conditional on `attribute_not_exists(PK)`. A retry finds the marker:
+- **same fingerprint** (same kind and same arguments as sent) → returns the original entry with `duplicate: true`, writes nothing;
+- **different fingerprint** → rejected, because the id was reused for a different request (including an expense id reused for an activity).
 
 ## Tenant isolation
 

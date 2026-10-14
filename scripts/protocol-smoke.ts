@@ -96,6 +96,20 @@ const checks: Check[] = [
     expectBody: (b) => b.result?.structuredContent?.items?.some((i: { note?: string }) => i.note === 'cattle feed (smoke test)'),
   },
   {
+    name: 'tools/call record_farm_activity (vaccination, brown cow)',
+    init: {
+      method: 'POST',
+      headers: afterInit,
+      body: rpc({
+        id: 11,
+        method: 'tools/call',
+        params: { name: 'record_farm_activity', arguments: { activityType: 'vaccination', animalOrField: 'brown cow', note: 'smoke test' } },
+      }),
+    },
+    expectStatus: 200,
+    expectBody: (b) => b.result?.structuredContent?.activity?.entryId?.startsWith('act_') && b.result.structuredContent.duplicate === false,
+  },
+  {
     name: 'tools/call record_expense invalid category -> isError',
     init: {
       method: 'POST',

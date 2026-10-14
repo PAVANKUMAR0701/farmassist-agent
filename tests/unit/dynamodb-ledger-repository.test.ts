@@ -44,7 +44,7 @@ describe('DynamoLedgerRepository.createExpense', () => {
       fingerprint: 'fp-1',
       expiresAt: Math.floor(NOW.getTime() / 1000) + 7 * 24 * 60 * 60,
     });
-    expect(marker!.Item!.expenseSK).toBe(expense!.Item!.SK);
+    expect(marker!.Item!.entrySK).toBe(expense!.Item!.SK);
     expect(marker!.ConditionExpression).toBe('attribute_not_exists(PK)');
     expect(expense!.ConditionExpression).toBe('attribute_not_exists(PK)');
   });
@@ -72,7 +72,7 @@ describe('DynamoLedgerRepository.createExpense', () => {
     };
     ddb
       .on(GetCommand, { Key: { PK: 'FARM#farm-1', SK: 'IDEM#req-12345678' } })
-      .resolves({ Item: { fingerprint: 'fp-1', expenseSK: originalItem.SK } })
+      .resolves({ Item: { fingerprint: 'fp-1', entrySK: originalItem.SK } })
       .on(GetCommand, { Key: { PK: 'FARM#farm-1', SK: originalItem.SK } })
       .resolves({ Item: originalItem });
 
@@ -90,7 +90,7 @@ describe('DynamoLedgerRepository.createExpense', () => {
         CancellationReasons: [{ Code: 'ConditionalCheckFailed' }, { Code: 'None' }],
       }),
     );
-    ddb.on(GetCommand).resolves({ Item: { fingerprint: 'other', expenseSK: 'EXP#x' } });
+    ddb.on(GetCommand).resolves({ Item: { fingerprint: 'other', entrySK: 'EXP#x' } });
 
     await expect(repo.createExpense(newExpense, { clientRequestId: 'req-12345678', fingerprint: 'fp-1' })).rejects.toBeInstanceOf(
       IdempotencyConflictError,
@@ -175,5 +175,29 @@ describe('DynamoLedgerRepository range queries', () => {
     const big = Array.from({ length: 10_001 }, (_, i) => item('2026-10-01', U(i)));
     ddb.on(QueryCommand).resolves({ Items: big });
     await expect(repo.getAllExpenses(range)).rejects.toBeInstanceOf(TooManyEntriesError);
+  });
+});
+
+describe('DynamoLedgerRepository activities', () => {
+  it('createActivity writes an ACT# item and its idempotency marker atomically', async () => {
+    ddb.on(TransactWriteCommand).resolves({});
+    const { entry } = await repo.createActivity(
+      { farmId: 'farm-1', date: '2026-10-14', activityType: 'vaccination', animalOrField: 'brown cow' },
+      { clientRequestId: 'act-req-0001', fingerprint: 'fp-a' },
+    );
+
+    const [marker, activity] = ddb.commandCalls(TransactWriteCommand)[0]!.args[0].input.TransactItems!.map((i) => i.Put!);
+    expect(activity!.Item).toMatchObject({ PK: 'FARM#farm-1', type: 'ACTIVITY', activityType: 'vaccination', animalOrField: 'brown cow' });
+    expect(activity!.Item!.SK).toMatch(/^ACT#2026-10-14#[0-9A-Z]{26}$/);
+    expect(marker!.Item).toMatchObject({ SK: 'IDEM#act-req-0001', entryId: entry.entryId, entrySK: activity!.Item!.SK });
+    expect(entry.entryId).toMatch(/^act_20261014_/);
+  });
+
+  it('getActivities queries only ACT# keys in the date range, oldest first', async () => {
+    ddb.on(QueryCommand).resolves({ Items: [] });
+    await repo.getActivities({ farmId: 'farm-1', from: '2026-10-14', to: '2026-10-14' });
+    const input = ddb.commandCalls(QueryCommand)[0]!.args[0].input;
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'FARM#farm-1', ':lo': 'ACT#2026-10-14#', ':hi': 'ACT#2026-10-14#~' });
+    expect(input.ScanIndexForward).toBeUndefined(); // DynamoDB default: ascending
   });
 });

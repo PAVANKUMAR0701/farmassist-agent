@@ -49,7 +49,7 @@ describe('record_expense tool', () => {
     const conflict = await callTool(config, 'record_expense', { amountRupees: 900, category: 'feed', clientRequestId: 'req-12345678' });
 
     expect(conflict.isError).toBe(true);
-    expect(conflict.content[0]!.text).toContain('already used for a different expense');
+    expect(conflict.content[0]!.text).toContain('already used for a different request');
     expect(ledger.expenses.size).toBe(1);
   });
 
