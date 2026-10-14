@@ -1,0 +1,29 @@
+{
+  "name": "farmassist-agent",
+  "version": "0.1.0",
+  "description": "Talk to your farm ledger — every number verified, never guessed. A self-hosted MCP server (Streamable HTTP) on AWS Lambda + DynamoDB + Amazon Bedrock.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0 <23"
+  },
+  "scripts": {
+    "dev": "tsx watch scripts/local-server.ts",
+    "start:local": "tsx scripts/local-server.ts",
+    "smoke": "tsx scripts/protocol-smoke.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  }
+}
