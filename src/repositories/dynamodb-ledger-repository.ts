@@ -1,7 +1,23 @@
 import { TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { GetCommand, PutCommand, TransactWriteCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import {
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  TransactWriteCommand,
+  type DynamoDBDocumentClient,
+  type QueryCommandInput,
+} from '@aws-sdk/lib-dynamodb';
 import { newExpenseEntryId, parseExpenseEntryId, type ExpenseCategory, type ExpenseEntry, type NewExpense } from '../domain/expense.js';
-import { IdempotencyConflictError, type CreateExpenseResult, type LedgerRepository } from './ledger-repository.js';
+import { decodeCursor, encodeCursor } from './cursor.js';
+import {
+  IdempotencyConflictError,
+  MAX_SUMMARY_ENTRIES,
+  TooManyEntriesError,
+  type CreateExpenseResult,
+  type ExpensePage,
+  type ExpenseRangeQuery,
+  type LedgerRepository,
+} from './ledger-repository.js';
 
 /** Idempotency records expire after 7 days (DynamoDB TTL attribute `expiresAt`, epoch seconds). */
 const IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -16,6 +32,8 @@ export const keys = {
   farm: (farmId: string) => `FARM#${farmId}`,
   expense: (date: string, id: string) => `EXP#${date}#${id}`,
   idempotency: (clientRequestId: string) => `IDEM#${clientRequestId}`,
+  /** Inclusive SK bounds for a date range. "~" sorts after every ULID character. */
+  expenseRange: (from: string, to: string) => ({ lo: `EXP#${from}#`, hi: `EXP#${to}#~` }),
 };
 
 interface ExpenseItem {
@@ -115,6 +133,67 @@ export class DynamoLedgerRepository implements LedgerRepository {
       if (!markerAlreadyExists) throw error;
       return this.replayIdempotentCreate(input.farmId, idempotency);
     }
+  }
+
+  async listExpenses(query: ExpenseRangeQuery & { limit: number; cursor?: string | undefined }): Promise<ExpensePage> {
+    const start = query.cursor ? decodeCursor(query.cursor, query) : undefined;
+    let exclusiveStartKey: Record<string, unknown> | undefined = start && {
+      PK: keys.farm(query.farmId),
+      SK: keys.expense(start.date, start.ulid),
+    };
+
+    // A category filter is applied after DynamoDB reads a page, so keep reading until we have limit + 1 matches
+    // (the extra one tells us whether another page exists).
+    const collected: ExpenseItem[] = [];
+    do {
+      const page = await this.client.send(
+        new QueryCommand({
+          ...this.rangeQuery(query),
+          ScanIndexForward: false,
+          Limit: Math.max(query.limit + 1, 25),
+          ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+        }),
+      );
+      collected.push(...((page.Items ?? []) as ExpenseItem[]));
+      exclusiveStartKey = page.LastEvaluatedKey;
+    } while (collected.length <= query.limit && exclusiveStartKey);
+
+    const items = collected.slice(0, query.limit).map(toEntry);
+    const last = items.at(-1);
+    const hasMore = collected.length > query.limit;
+    return {
+      items,
+      ...(hasMore && last ? { nextCursor: encodeCursor({ date: last.date, ulid: parseExpenseEntryId(last.entryId)!.ulid }, query) } : {}),
+    };
+  }
+
+  async getAllExpenses(query: ExpenseRangeQuery): Promise<ExpenseEntry[]> {
+    const items: ExpenseItem[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const page = await this.client.send(
+        new QueryCommand({ ...this.rangeQuery(query), ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}) }),
+      );
+      items.push(...((page.Items ?? []) as ExpenseItem[]));
+      if (items.length > MAX_SUMMARY_ENTRIES) throw new TooManyEntriesError();
+      exclusiveStartKey = page.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return items.map(toEntry);
+  }
+
+  private rangeQuery(query: ExpenseRangeQuery): QueryCommandInput {
+    const { lo, hi } = keys.expenseRange(query.from, query.to);
+    return {
+      TableName: this.tableName,
+      KeyConditionExpression: 'PK = :pk AND SK BETWEEN :lo AND :hi',
+      ...(query.category ? { FilterExpression: '#category = :category', ExpressionAttributeNames: { '#category': 'category' } } : {}),
+      ExpressionAttributeValues: {
+        ':pk': keys.farm(query.farmId),
+        ':lo': lo,
+        ':hi': hi,
+        ...(query.category ? { ':category': query.category } : {}),
+      },
+    };
   }
 
   /** A previous request already used this clientRequestId: return its entry instead of writing a duplicate. */

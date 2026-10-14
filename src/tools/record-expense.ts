@@ -3,15 +3,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { farmIdFromAuth } from '../auth/bearer.js';
 import { EXPENSE_CATEGORIES } from '../domain/expense.js';
-import { IdempotencyConflictError, type LedgerRepository } from '../repositories/ledger-repository.js';
-import { formatPaise, hasAtMostTwoDecimals, MAX_ENTRY_RUPEES, rupeesToPaise } from '../shared/money.js';
+import { IdempotencyConflictError } from '../repositories/ledger-repository.js';
+import { hasAtMostTwoDecimals, MAX_ENTRY_RUPEES, rupeesToPaise } from '../shared/money.js';
 import { isValidIsoDate, todayInFarmTimeZone } from '../shared/time.js';
+import { entryViewSchema, toEntryView, type ToolDeps } from './shared.js';
 import { runTool, ToolUserError } from './tool-errors.js';
-
-export interface ToolDeps {
-  ledger: LedgerRepository;
-  now: () => Date;
-}
 
 const inputSchema = {
   amountRupees: z
@@ -35,17 +31,8 @@ const inputSchema = {
     .describe('Unique id for this request. Retrying with the same id never creates a second entry.'),
 };
 
-const entryOutput = z.object({
-  entryId: z.string(),
-  date: z.string(),
-  category: z.enum(EXPENSE_CATEGORIES),
-  amountPaise: z.number().int(),
-  amountDisplay: z.string(),
-  note: z.string().optional(),
-});
-
 const outputSchema = {
-  entry: entryOutput,
+  entry: entryViewSchema,
   duplicate: z.boolean().describe('True if this request was already recorded earlier; nothing new was saved.'),
 };
 
@@ -89,21 +76,11 @@ export function registerRecordExpense(server: McpServer, deps: ToolDeps): void {
           throw error;
         }
 
-        const { entry, duplicate } = result;
-        const structured = {
-          entry: {
-            entryId: entry.entryId,
-            date: entry.date,
-            category: entry.category,
-            amountPaise: entry.amountPaise,
-            amountDisplay: formatPaise(entry.amountPaise),
-            ...(entry.note ? { note: entry.note } : {}),
-          },
-          duplicate,
-        };
-        const summary = duplicate
-          ? `Already recorded earlier (no duplicate created): ${structured.entry.amountDisplay} on ${entry.category} for ${entry.date}.`
-          : `Recorded ${structured.entry.amountDisplay} on ${entry.category} for ${entry.date}.`;
+        const structured = { entry: toEntryView(result.entry), duplicate: result.duplicate };
+        const { entry } = structured;
+        const summary = result.duplicate
+          ? `Already recorded earlier (no duplicate created): ${entry.amountDisplay} on ${entry.category} for ${entry.date}.`
+          : `Recorded ${entry.amountDisplay} on ${entry.category} for ${entry.date}.`;
         return {
           content: [{ type: 'text' as const, text: `${summary}\n${JSON.stringify(structured)}` }],
           structuredContent: structured,

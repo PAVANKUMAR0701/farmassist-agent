@@ -1,7 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
-import { registerRecordExpense, type ToolDeps } from '../tools/record-expense.js';
+import { registerGetExpenseSummary } from '../tools/get-expense-summary.js';
+import { registerListExpenses } from '../tools/list-expenses.js';
+import { registerRecordExpense } from '../tools/record-expense.js';
+import type { ToolDeps } from '../tools/shared.js';
 
 export const SERVER_NAME = 'farmassist-agent';
 export const SERVER_VERSION = '0.1.0';
@@ -51,6 +54,8 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   );
 
   registerRecordExpense(server, deps);
+  registerListExpenses(server, deps);
+  registerGetExpenseSummary(server, deps);
 
   return server;
 }

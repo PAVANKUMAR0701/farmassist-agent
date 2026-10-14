@@ -1,9 +1,9 @@
 import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DynamoLedgerRepository } from '../../src/repositories/dynamodb-ledger-repository.js';
-import { IdempotencyConflictError } from '../../src/repositories/ledger-repository.js';
+import { IdempotencyConflictError, TooManyEntriesError } from '../../src/repositories/ledger-repository.js';
 
 // These tests check the exact DynamoDB requests we build (keys, conditions, atomicity).
 // Real conditional-write behaviour is verified against a deployed table in the integration tests (Phase 2).
@@ -105,5 +105,75 @@ describe('DynamoLedgerRepository.createExpense', () => {
     });
     ddb.on(TransactWriteCommand).rejects(throttled);
     await expect(repo.createExpense(newExpense, { clientRequestId: 'req-12345678', fingerprint: 'fp-1' })).rejects.toBe(throttled);
+  });
+});
+
+const item = (date: string, ulid: string, category = 'feed', amountPaise = 1000) => ({
+  PK: 'FARM#farm-1',
+  SK: `EXP#${date}#${ulid}`,
+  type: 'EXPENSE',
+  entryId: `exp_${date.replaceAll('-', '')}_${ulid}`,
+  farmId: 'farm-1',
+  date,
+  category,
+  amountPaise,
+  createdAt: '2026-10-14T06:00:00.000Z',
+  updatedAt: '2026-10-14T06:00:00.000Z',
+  version: 1,
+});
+const U = (n: number) => `01J${String(n).padStart(23, '0')}`;
+
+describe('DynamoLedgerRepository range queries', () => {
+  const range = { farmId: 'farm-1', from: '2026-10-01', to: '2026-10-14' };
+
+  it('listExpenses queries one farm partition, date-bounded, newest first', async () => {
+    ddb.on(QueryCommand).resolves({ Items: [item('2026-10-14', U(2)), item('2026-10-10', U(1))] });
+    const page = await repo.listExpenses({ ...range, limit: 20 });
+
+    const input = ddb.commandCalls(QueryCommand)[0]!.args[0].input;
+    expect(input.KeyConditionExpression).toBe('PK = :pk AND SK BETWEEN :lo AND :hi');
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'FARM#farm-1', ':lo': 'EXP#2026-10-01#', ':hi': 'EXP#2026-10-14#~' });
+    expect(input.ScanIndexForward).toBe(false);
+    expect(input.FilterExpression).toBeUndefined();
+    expect(page.items.map((e) => e.date)).toEqual(['2026-10-14', '2026-10-10']);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  it('keeps reading pages when a category filter leaves too few matches, and returns a cursor', async () => {
+    ddb
+      .on(QueryCommand)
+      .resolvesOnce({ Items: [item('2026-10-14', U(5))], LastEvaluatedKey: { PK: 'FARM#farm-1', SK: `EXP#2026-10-14#${U(5)}` } })
+      .resolvesOnce({ Items: [item('2026-10-12', U(4)), item('2026-10-11', U(3))] });
+    const page = await repo.listExpenses({ ...range, category: 'feed', limit: 2 });
+
+    const calls = ddb.commandCalls(QueryCommand);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.args[0].input.FilterExpression).toBe('#category = :category');
+    expect(calls[0]!.args[0].input.ExpressionAttributeNames).toEqual({ '#category': 'category' });
+    expect(calls[1]!.args[0].input.ExclusiveStartKey).toEqual({ PK: 'FARM#farm-1', SK: `EXP#2026-10-14#${U(5)}` });
+    expect(page.items).toHaveLength(2);
+    expect(page.nextCursor).toBeDefined();
+
+    // The cursor resumes after the last returned item.
+    ddb.reset();
+    ddb.on(QueryCommand).resolves({ Items: [item('2026-10-11', U(3))] });
+    await repo.listExpenses({ ...range, category: 'feed', limit: 2, cursor: page.nextCursor });
+    expect(ddb.commandCalls(QueryCommand)[0]!.args[0].input.ExclusiveStartKey).toEqual({ PK: 'FARM#farm-1', SK: `EXP#2026-10-12#${U(4)}` });
+  });
+
+  it('getAllExpenses follows LastEvaluatedKey until the range is exhausted', async () => {
+    ddb
+      .on(QueryCommand)
+      .resolvesOnce({ Items: [item('2026-10-01', U(1))], LastEvaluatedKey: { PK: 'FARM#farm-1', SK: `EXP#2026-10-01#${U(1)}` } })
+      .resolvesOnce({ Items: [item('2026-10-02', U(2))] });
+    const all = await repo.getAllExpenses(range);
+    expect(all).toHaveLength(2);
+    expect(ddb.commandCalls(QueryCommand)).toHaveLength(2);
+  });
+
+  it('getAllExpenses stops with TooManyEntriesError past the safety cap', async () => {
+    const big = Array.from({ length: 10_001 }, (_, i) => item('2026-10-01', U(i)));
+    ddb.on(QueryCommand).resolves({ Items: big });
+    await expect(repo.getAllExpenses(range)).rejects.toBeInstanceOf(TooManyEntriesError);
   });
 });

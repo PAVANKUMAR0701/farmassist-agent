@@ -76,6 +76,26 @@ const checks: Check[] = [
     expectBody: (b) => b.result?.structuredContent?.duplicate === true,
   },
   {
+    name: 'tools/call get_expense_summary (feed, this month) includes the ₹2,500',
+    init: {
+      method: 'POST',
+      headers: afterInit,
+      body: rpc({ id: 9, method: 'tools/call', params: { name: 'get_expense_summary', arguments: { period: 'this_month', category: 'feed' } } }),
+    },
+    expectStatus: 200,
+    expectBody: (b) => b.result?.structuredContent?.calculatedBy === 'server' && b.result.structuredContent.totalPaise >= 250000,
+  },
+  {
+    name: 'tools/call list_expenses returns the smoke-test entry',
+    init: {
+      method: 'POST',
+      headers: afterInit,
+      body: rpc({ id: 10, method: 'tools/call', params: { name: 'list_expenses', arguments: { period: 'today', category: 'feed', limit: 50 } } }),
+    },
+    expectStatus: 200,
+    expectBody: (b) => b.result?.structuredContent?.items?.some((i: { note?: string }) => i.note === 'cattle feed (smoke test)'),
+  },
+  {
     name: 'tools/call record_expense invalid category -> isError',
     init: {
       method: 'POST',

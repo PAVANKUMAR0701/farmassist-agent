@@ -77,4 +77,27 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:3000/mcp --transport 
 
 Result: `"amountPaise": 80000, "amountDisplay": "₹800.00", "duplicate": false`.
 
+## Recorded result: with `list_expenses` and `get_expense_summary`, 2026-10-14
+
+```
+PASS  initialize  (HTTP 200, expected 200)
+PASS  notifications/initialized -> 202  (HTTP 202, expected 202)
+PASS  tools/list  (HTTP 200, expected 200)
+PASS  tools/call record_expense  (HTTP 200, expected 200)
+PASS  tools/call record_expense again (same clientRequestId) -> duplicate  (HTTP 200, expected 200)
+PASS  tools/call get_expense_summary (feed, this month) includes the ₹2,500  (HTTP 200, expected 200)
+PASS  tools/call list_expenses returns the smoke-test entry  (HTTP 200, expected 200)
+PASS  tools/call record_expense invalid category -> isError  (HTTP 200, expected 200)
+PASS  missing bearer token -> 401  (HTTP 401, expected 401)
+PASS  GET -> 405  (HTTP 405, expected 405)
+PASS  DELETE -> 405  (HTTP 405, expected 405)
+PASS  bad Origin -> 403  (HTTP 403, expected 403)
+PASS  unsupported MCP-Protocol-Version -> 400  (HTTP 400, expected 400)
+PASS  Accept without text/event-stream -> 406  (HTTP 406, expected 406)
+
+14/14 checks passed
+```
+
+`get_expense_summary {"period":"this_month","category":"feed"}` replied: `Spent ₹2,500.00 on feed from 2026-10-01 to 2026-10-14 (1 entry).` with `"totalPaise": 250000` and `"calculatedBy": "server"`.
+
 The deployed AWS endpoint has not been tested yet; that comes in Phase 2.
