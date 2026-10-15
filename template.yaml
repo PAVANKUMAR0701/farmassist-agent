@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  FarmAssist Agent - stateless Streamable HTTP MCP server on AWS Lambda (Function URL) with a single DynamoDB table.
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+    AllowedPattern: '^[a-z0-9-]{1,16}$'
+    Description: Short name used in resource names, e.g. dev or demo.
+  ApiTokenParameterName:
+    Type: String
+    Default: /farmassist/dev/api-token
+    AllowedPattern: '^/[A-Za-z0-9/_.-]+$'
+    Description: >
+      Name of an existing SSM SecureString parameter holding the bearer token (at least 32 characters).
+      CloudFormation cannot create SecureStrings, so create it first (see README).
+  DemoFarmId:
+    Type: String
+    Default: demo-farm
+    AllowedPattern: '^[A-Za-z0-9_-]{1,64}$'
+    Description: The farm that the bearer token can read and write.
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173
+    Description: Browser origins allowed to call the MCP endpoint (comma-separated).
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >
+      Caps concurrent Lambda executions (cost and abuse guard). 0 leaves it unset; new AWS accounts often have a
+      total limit of 10, which leaves no room to reserve any.
+
+Conditions:
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+
+Resources:
+  LedgerTable:
+    Type: AWS::DynamoDB::Table
+    # Farm records are never deleted with the stack by accident. Delete the table by hand after the demo.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub farmassist-${StageName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  McpFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/farmassist-mcp-${StageName}
+      RetentionInDays: 14
+
+  McpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub farmassist-mcp-${StageName}
+      Description: FarmAssist MCP server (Streamable HTTP, stateless, JSON responses)
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      Handler: handler.handler
+      CodeUri: .
+      MemorySize: 512
+      Timeout: 10
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      LoggingConfig:
+        LogGroup: !Ref McpFunctionLogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          FARMASSIST_TABLE_NAME: !Ref LedgerTable
+          FARMASSIST_TOKEN_PARAMETER: !Ref ApiTokenParameterName
+          FARMASSIST_DEMO_FARM_ID: !Ref DemoFarmId
+          ALLOWED_ORIGINS: !Join [',', !Ref AllowedOrigins]
+          NODE_OPTIONS: --enable-source-maps
+      # Auth is the bearer token checked in code (src/auth/bearer.ts); the URL itself is public.
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: !Ref AllowedOrigins
+          AllowMethods: [POST]
+          AllowHeaders: [content-type, accept, authorization, mcp-protocol-version, last-event-id]
+          MaxAge: 300
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # Least privilege: exactly the item operations the repository uses (TransactWriteItems is
+            # authorised through the Put/Update permissions of the items it writes).
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource: !GetAtt LedgerTable.Arn
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApiTokenParameterName}
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/lambda/handler.ts
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        Target: node22
+        Platform: node
+        Minify: false
+        Sourcemap: true
+        # Some bundled dependencies still call require(); give ESM output a working one.
+        Banner:
+          - js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
+
+Outputs:
+  McpEndpoint:
+    Description: Streamable HTTP MCP endpoint
+    Value: !Sub '${McpFunctionUrl.FunctionUrl}mcp'
+  TableName:
+    Description: DynamoDB table holding the farm ledger
+    Value: !Ref LedgerTable
+  FunctionName:
+    Value: !Ref McpFunction

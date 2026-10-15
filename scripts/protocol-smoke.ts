@@ -137,6 +137,19 @@ const checks: Check[] = [
     },
   },
   {
+    name: 'tools/call get_daily_summary (today) includes the corrected ₹900 and the vaccination',
+    init: toolCall(14, 'get_daily_summary', {}),
+    expectStatus: 200,
+    expectBody: (b) => {
+      const s = b.result?.structuredContent;
+      return (
+        s?.calculatedBy === 'server' &&
+        s.expenses.some((e: { entryId: string; amountPaise: number }) => e.entryId === state.medicineEntryId && e.amountPaise === 90000) &&
+        s.activities.some((a: { activityType: string }) => a.activityType === 'vaccination')
+      );
+    },
+  },
+  {
     name: 'tools/call record_expense invalid category -> isError',
     init: {
       method: 'POST',

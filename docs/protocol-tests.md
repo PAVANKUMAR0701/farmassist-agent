@@ -100,4 +100,19 @@ PASS  Accept without text/event-stream -> 406  (HTTP 406, expected 406)
 
 `get_expense_summary {"period":"this_month","category":"feed"}` replied: `Spent ₹2,500.00 on feed from 2026-10-01 to 2026-10-14 (1 entry).` with `"totalPaise": 250000` and `"calculatedBy": "server"`.
 
-The deployed AWS endpoint has not been tested yet; that comes in Phase 2.
+## Recorded result: with `get_daily_summary`, 2026-10-15
+
+Local server, in-memory storage. The new check confirms that the daily summary shows the corrected ₹900 (not the original ₹800) and the vaccination.
+
+```
+PASS  tools/call correct_entry ₹800 -> ₹900 (before/after)  (HTTP 200, expected 200)
+PASS  tools/call get_daily_summary (today) includes the corrected ₹900 and the vaccination  (HTTP 200, expected 200)
+...
+18/18 checks passed
+```
+
+## Lambda Function URL handler
+
+`tests/lambda/handler.test.ts` runs the Lambda entry point (`src/lambda/handler.ts`) with Function URL events, mocking SSM and DynamoDB. It checks `initialize`, `tools/list`, base64 bodies, 202 for notifications, 401/403/405/404, and that a failed token load returns 500 and is retried on the next request.
+
+The deployed AWS endpoint has not been tested yet. Once deployed, run `npm run smoke -- <McpEndpoint>` and record the result here.

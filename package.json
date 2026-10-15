@@ -14,18 +14,22 @@
     "smoke": "tsx scripts/protocol-smoke.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:lambda": "esbuild src/lambda/handler.ts --bundle --platform=node --target=node22 --format=esm --out-extension:.js=.mjs --sourcemap --outdir=dist \"--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.1151.0",
+    "@aws-sdk/client-ssm": "3.1151.0",
     "@aws-sdk/lib-dynamodb": "3.1151.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "ulid": "3.0.2",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@types/aws-lambda": "8.10.164",
     "@types/node": "22.20.5",
     "aws-sdk-client-mock": "4.1.0",
+    "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vitest": "5.0.4"

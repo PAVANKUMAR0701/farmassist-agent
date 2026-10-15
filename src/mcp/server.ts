@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
 import { registerCorrectEntry } from '../tools/correct-entry.js';
+import { registerGetDailySummary } from '../tools/get-daily-summary.js';
 import { registerGetExpenseSummary } from '../tools/get-expense-summary.js';
 import { registerListExpenses } from '../tools/list-expenses.js';
 import { registerRecordExpense } from '../tools/record-expense.js';
@@ -60,6 +61,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   registerGetExpenseSummary(server, deps);
   registerRecordFarmActivity(server, deps);
   registerCorrectEntry(server, deps);
+  registerGetDailySummary(server, deps);
 
   return server;
 }
