@@ -33,8 +33,29 @@ Parameters:
       Caps concurrent Lambda executions (cost and abuse guard). 0 leaves it unset; new AWS accounts often have a
       total limit of 10, which leaves no room to reserve any.
 
+  BedrockModelId:
+    Type: String
+    Default: ''
+    Description: >
+      Bedrock model or inference profile id for weekly_insights narration, e.g.
+      in.anthropic.claude-haiku-4-5-20251001-v1:0. Empty disables Bedrock (the tool then uses template text).
+  BedrockRegion:
+    Type: String
+    Default: ap-south-1
+    Description: Region of the Bedrock model or inference profile.
+  BedrockRoleArn:
+    Type: String
+    Default: ''
+    Description: >
+      Optional IAM role to assume for Bedrock calls when Bedrock runs in a different AWS account.
+      Empty means Bedrock is called with this function's own role in this account.
+
 Conditions:
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+  HasBedrockModel: !Not [!Equals [!Ref BedrockModelId, '']]
+  HasBedrockRole: !Not [!Equals [!Ref BedrockRoleArn, '']]
+  UsesBedrockInThisAccount: !And [!Condition HasBedrockModel, !Not [!Condition HasBedrockRole]]
+  UsesBedrockRole: !And [!Condition HasBedrockModel, !Condition HasBedrockRole]
 
 Resources:
   LedgerTable:
@@ -79,7 +100,8 @@ Resources:
       Handler: handler.handler
       CodeUri: .
       MemorySize: 512
-      Timeout: 10
+      # Up to two Bedrock calls for weekly_insights; every other tool answers in well under a second.
+      Timeout: 30
       ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
       LoggingConfig:
         LogGroup: !Ref McpFunctionLogGroup
@@ -91,6 +113,9 @@ Resources:
           FARMASSIST_DEMO_FARM_ID: !Ref DemoFarmId
           ALLOWED_ORIGINS: !Join [',', !Ref AllowedOrigins]
           NODE_OPTIONS: --enable-source-maps
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          BEDROCK_ROLE_ARN: !Ref BedrockRoleArn
       # Auth is the bearer token checked in code (src/auth/bearer.ts); the URL itself is public.
       FunctionUrlConfig:
         AuthType: NONE
@@ -114,6 +139,23 @@ Resources:
             - Effect: Allow
               Action: ssm:GetParameter
               Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApiTokenParameterName}
+            # Bedrock in this account: the configured inference profile, plus the foundation models it routes
+            # to (a cross-region profile can use any region in its geography).
+            - !If
+              - UsesBedrockInThisAccount
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${BedrockRegion}:${AWS::AccountId}:inference-profile/${BedrockModelId}
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
+              - !Ref AWS::NoValue
+            # Bedrock in another account: only assume that one role.
+            - !If
+              - UsesBedrockRole
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Ref BedrockRoleArn
+              - !Ref AWS::NoValue
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -139,3 +181,6 @@ Outputs:
     Value: !Ref LedgerTable
   FunctionName:
     Value: !Ref McpFunction
+  FunctionRoleArn:
+    Description: Role the MCP function runs as. Trust this ARN from a Bedrock role in another account.
+    Value: !GetAtt McpFunctionRole.Arn

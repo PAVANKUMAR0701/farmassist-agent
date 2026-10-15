@@ -18,8 +18,10 @@
     "build:lambda": "esbuild src/lambda/handler.ts --bundle --platform=node --target=node22 --format=esm --out-extension:.js=.mjs --sourcemap --outdir=dist \"--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1151.0",
     "@aws-sdk/client-dynamodb": "3.1151.0",
     "@aws-sdk/client-ssm": "3.1151.0",
+    "@aws-sdk/credential-providers": "3.1151.0",
     "@aws-sdk/lib-dynamodb": "3.1151.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "ulid": "3.0.2",

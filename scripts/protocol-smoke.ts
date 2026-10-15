@@ -150,6 +150,15 @@ const checks: Check[] = [
     },
   },
   {
+    name: 'tools/call weekly_insights returns verified facts and a guarded narrative',
+    init: toolCall(15, 'weekly_insights', {}),
+    expectStatus: 200,
+    expectBody: (b) => {
+      const s = b.result?.structuredContent;
+      return s?.facts?.totalPaise >= 250000 && typeof s.narrative === 'string' && ['passed', 'replaced', 'bedrock_unavailable', 'bedrock_not_configured'].includes(s.guard?.status);
+    },
+  },
+  {
     name: 'tools/call record_expense invalid category -> isError',
     init: {
       method: 'POST',

@@ -13,6 +13,7 @@ import { handleMcpRequest, type McpHttpConfig } from '../src/mcp/http.js';
 import { DynamoLedgerRepository } from '../src/repositories/dynamodb-ledger-repository.js';
 import type { LedgerRepository } from '../src/repositories/ledger-repository.js';
 import { InMemoryLedgerRepository } from '../src/repositories/memory-ledger-repository.js';
+import { createNarratorFromEnv } from '../src/services/insight-narrator.js';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
 
@@ -39,10 +40,12 @@ if (tableName) {
   ledger = new InMemoryLedgerRepository();
 }
 
+const narrator = createNarratorFromEnv();
+
 const config: McpHttpConfig = {
   allowedOrigins,
   apiTokens: [{ token, farmId, clientId: 'local-dev' }],
-  deps: { ledger, now: () => new Date() },
+  deps: { ledger, now: () => new Date(), narrator },
 };
 
 const httpServer = createServer(async (req, res) => {
@@ -85,4 +88,5 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`Allowed browser origins: ${allowedOrigins.join(', ') || '(none)'}`);
   console.log(`Farm: ${farmId}`);
   console.log(tableName ? `Storage: DynamoDB table ${tableName}` : 'Storage: IN MEMORY (data is lost on restart)');
+  console.log(narrator ? `Weekly insights: Bedrock model ${narrator.modelId}` : 'Weekly insights: template only (BEDROCK_MODEL_ID not set)');
 });

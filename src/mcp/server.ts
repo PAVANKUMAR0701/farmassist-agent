@@ -8,6 +8,7 @@ import { registerListExpenses } from '../tools/list-expenses.js';
 import { registerRecordExpense } from '../tools/record-expense.js';
 import { registerRecordFarmActivity } from '../tools/record-farm-activity.js';
 import type { ToolDeps } from '../tools/shared.js';
+import { registerWeeklyInsights } from '../tools/weekly-insights.js';
 
 export const SERVER_NAME = 'farmassist-agent';
 export const SERVER_VERSION = '0.1.0';
@@ -62,6 +63,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   registerRecordFarmActivity(server, deps);
   registerCorrectEntry(server, deps);
   registerGetDailySummary(server, deps);
+  registerWeeklyInsights(server, deps);
 
   return server;
 }

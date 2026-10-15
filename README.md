@@ -4,7 +4,7 @@
 
 FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmers in India. It is a **self-hosted MCP server** (Model Context Protocol, spec 2025-11-25, Streamable HTTP) for AWS Lambda and DynamoDB, with Amazon Bedrock planned for insights.
 
-**Status: Phase 2 (AWS deployment) in progress.** The ledger tools below work locally and are covered by tests. The AWS SAM template and Lambda handler are written and checked (template lint, bundle build, handler tests), but **have not been deployed yet**. The Bedrock insights and the web client are still to come.
+**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The AWS SAM template and Lambda handler are written and checked (template lint, bundle build, handler tests). **Nothing has been deployed yet, and no real Bedrock call has been tested yet.** The web client is still to come.
 
 ## Tools
 
@@ -16,6 +16,7 @@ FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmer
 | `record_farm_activity` | Logs milking, vaccination, sowing, harvesting, irrigation, etc., per animal or field. |
 | `correct_entry` | Fixes an expense ("no, it was ₹900") and keeps an audit record of the old value. |
 | `get_daily_summary` | Everything recorded on one day: expense total, spending by category, all expenses and activities. |
+| `weekly_insights` | Plain-language explanation of the last 7 days, written by Amazon Bedrock from figures calculated in code. Every number is checked by the [verified-number guard](docs/number-guard.md). |
 | `health_check` | Confirms the server is reachable. |
 
 All totals are added up by server code, and "today" or "this month" is worked out on the server in India time. The farm ID comes only from the bearer token. See [docs/data-model.md](docs/data-model.md).
@@ -68,6 +69,8 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
    ```bash
    npm run smoke -- https://<id>.lambda-url.ap-south-1.on.aws/mcp
    ```
+
+**Bedrock (optional):** set `BedrockModelId` (for example `in.anthropic.claude-haiku-4-5-20251001-v1:0`) to turn on Bedrock narration in `weekly_insights`. Leave it empty and the tool uses template text built from the same verified figures. If Bedrock runs in a different AWS account, also set `BedrockRoleArn`. The function then has permission only to assume that one role, and that role must trust the `FunctionRoleArn` stack output. For local runs, set `BEDROCK_MODEL_ID` and optionally `BEDROCK_AWS_PROFILE` in `.env.local` (see `.env.example`).
 
 **Cost guards:** everything is pay-per-request. Set `ReservedConcurrency` (for example 5) to cap concurrent executions, but only if your account's concurrency limit is above 10. New accounts often have exactly 10, which leaves nothing to reserve.
 
