@@ -8,7 +8,7 @@
  */
 import { ulid } from 'ulid';
 import { todayInFarmTimeZone } from '../shared/time.js';
-import { confirmationAnswer, confirmationPrompt, type PendingAction } from './confirm.js';
+import { confirmationAnswer, confirmationPrompt, MAX_CHANGES_PER_CONFIRMATION, type PendingAction, type ProposedChange } from './confirm.js';
 import { decideFallback, FALLBACK_HELP } from './fallback.js';
 import type { FarmToolClient, ToolCallResult } from './mcp-client.js';
 import type { AgentModel, ChatBlock, ChatMessage } from './model.js';
@@ -98,6 +98,15 @@ export interface FarmAgentOptions {
   maxToolRounds?: number;
 }
 
+/** Conversations stored before several changes could be held at once kept a single { name, args }. */
+function normalisePending(pending: unknown): PendingAction | undefined {
+  if (!pending || typeof pending !== 'object') return undefined;
+  const p = pending as Partial<PendingAction> & Partial<ProposedChange>;
+  if (Array.isArray(p.changes)) return p as PendingAction;
+  if (typeof p.name === 'string' && p.args) return { changes: [{ name: p.name, args: p.args }], prompt: String(p.prompt ?? ''), mode: p.mode ?? 'model' };
+  return undefined;
+}
+
 /** The server's human-readable text without the JSON copy it appends after the first line(s). */
 export function serverText(result: ToolCallResult): string {
   const lines = result.text.split('\n');
@@ -138,7 +147,7 @@ export class FarmAgent {
     this.maxToolRounds = options.maxToolRounds ?? 4;
     this.history = options.state?.history ?? [];
     this.lastExpenseId = options.state?.lastExpenseId;
-    this.pending = options.state?.pending;
+    this.pending = normalisePending(options.state?.pending);
   }
 
   exportState(): AgentState {
@@ -201,8 +210,9 @@ export class FarmAgent {
           messages[messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: turn.reply }] };
           return { turn, transcript: messages };
         }
-        const change = confirmWrites ? uses.find((u) => CHANGING_TOOLS.has(u.name)) : undefined;
-        if (change) return { turn: { ...this.hold(change.name, change.input, 'model'), toolCalls } };
+        // Voice: every change the model asked for in this response is held and read back together.
+        const changes = confirmWrites ? uses.filter((u) => CHANGING_TOOLS.has(u.name)) : [];
+        if (changes.length > 0) return { turn: { ...this.hold(changes.map((u) => ({ name: u.name, args: u.input })), 'model'), toolCalls } };
         const results: ChatBlock[] = [];
         for (const use of uses) {
           const call = await this.runTool(use.name, use.input);
@@ -224,23 +234,36 @@ export class FarmAgent {
   private async handleWithFallback(message: string, confirmWrites = false): Promise<AgentTurn> {
     const decision = decideFallback(message, { lastExpenseId: this.lastExpenseId }, todayInFarmTimeZone(this.now()));
     if (decision.kind === 'reply') return { reply: decision.text, mode: 'fallback', toolCalls: [] };
-    if (confirmWrites && CHANGING_TOOLS.has(decision.name)) return this.hold(decision.name, decision.args, 'fallback');
+    if (confirmWrites && CHANGING_TOOLS.has(decision.name)) return this.hold([{ name: decision.name, args: decision.args }], 'fallback');
     const call = await this.runTool(decision.name, decision.args);
     return { reply: serverText(call.result), mode: 'fallback', toolCalls: [call] };
   }
 
-  /** Holds a write until the farmer confirms it. The id is fixed now, so a retried "yes" cannot record twice. */
-  private hold(name: string, input: Record<string, unknown>, mode: 'model' | 'fallback'): AgentTurn {
-    const args = WRITE_TOOLS.has(name) && !input.clientRequestId ? { ...input, clientRequestId: `agent-${ulid()}` } : { ...input };
-    const prompt = confirmationPrompt(name, args);
-    this.pending = { name, args, prompt, mode };
+  /** Holds writes until the farmer confirms them. Ids are fixed now, so a retried "yes" cannot record twice. */
+  private hold(proposed: ProposedChange[], mode: 'model' | 'fallback'): AgentTurn {
+    const changes = proposed.slice(0, MAX_CHANGES_PER_CONFIRMATION).map(({ name, args }) => ({
+      name,
+      args: WRITE_TOOLS.has(name) && !args.clientRequestId ? { ...args, clientRequestId: `agent-${ulid()}` } : { ...args },
+    }));
+    const extra = proposed.length > changes.length ? ` (I can save ${MAX_CHANGES_PER_CONFIRMATION} at a time; please send the rest again after this.)` : '';
+    const prompt = `${confirmationPrompt(changes)}${extra}`;
+    this.pending = { changes, prompt, mode };
     return { reply: prompt, mode, toolCalls: [], confirmation: { prompt } };
   }
 
+  /** Runs every confirmed change, in order, and reports each one in the server's own words. */
   private async runConfirmed(pending: PendingAction): Promise<AgentTurn> {
-    const call = await this.runTool(pending.name, pending.args);
-    const text = serverText(call.result);
-    return { reply: call.result.isError ? `Nothing was saved. ${sentence(text)}` : text, mode: pending.mode, toolCalls: [call], confirmed: true };
+    const toolCalls: AgentToolCall[] = [];
+    for (const change of pending.changes) toolCalls.push(await this.runTool(change.name, change.args));
+    const saved = toolCalls.filter((c) => !c.result.isError).map((c) => serverText(c.result));
+    const refused = toolCalls.filter((c) => c.result.isError).map((c) => sentence(serverText(c.result)));
+    const reply =
+      refused.length === 0
+        ? saved.join(' ')
+        : saved.length === 0
+          ? `Nothing was saved. ${refused.join(' ')}`
+          : `${saved.join(' ')} Not saved: ${refused.join(' ')}`;
+    return { reply, mode: pending.mode, toolCalls, confirmed: true };
   }
 
   /** Calls one tool, adding a clientRequestId to writes and retrying once (same id) if the request itself fails. */

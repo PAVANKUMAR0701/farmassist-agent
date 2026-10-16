@@ -6,14 +6,21 @@
  */
 import { formatPaise, rupeesToPaise } from '../shared/money.js';
 
-/** A write the agent is holding until the farmer confirms it. */
-export interface PendingAction {
+export interface ProposedChange {
   name: string;
   args: Record<string, unknown>;
+}
+
+/** The changes the agent is holding until the farmer confirms them (one message may ask for several). */
+export interface PendingAction {
+  changes: ProposedChange[];
   prompt: string;
-  /** Who proposed it, for the turn that finally runs it. */
+  /** Who proposed them, for the turn that finally runs them. */
   mode: 'model' | 'fallback';
 }
+
+/** Most changes one confirmation may cover; a longer list is cut and the farmer told to send the rest again. */
+export const MAX_CHANGES_PER_CONFIRMATION = 5;
 
 function rupees(value: unknown): string {
   try {
@@ -47,8 +54,20 @@ export function describeAction(name: string, args: Record<string, unknown>): str
   }
 }
 
-export const confirmationPrompt = (name: string, args: Record<string, unknown>) =>
-  `Shall I ${describeAction(name, args)}? Say yes to save it, or no to cancel.`;
+/**
+ * One question for all held changes, e.g. "Shall I record 3 expenses for today: ₹3,500.00 on other,
+ * ₹6,000.00 on feed and ₹400.00 on medicine? Say yes to save them, or no to cancel."
+ */
+export function confirmationPrompt(changes: readonly ProposedChange[]): string {
+  const list = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+  if (changes.length === 1) return `Shall I ${describeAction(changes[0]!.name, changes[0]!.args)}? Say yes to save it, or no to cancel.`;
+
+  const sameDayExpenses = changes.every((c) => c.name === 'record_expense' && c.args.date === changes[0]!.args.date);
+  const body = sameDayExpenses
+    ? `record ${changes.length} expenses${when(changes[0]!.args)}: ${list(changes.map((c) => `${rupees(c.args.amountRupees)} on ${String(c.args.category)}`))}`
+    : list(changes.map((c) => describeAction(c.name, c.args)));
+  return `Shall I ${body}? Say yes to save them, or no to cancel.`;
+}
 
 // English, Hindi/Hinglish and Tamil (romanised and native script).
 const YES = new Set(['yes', 'yeah', 'yep', 'ya', 'ok', 'okay', 'sure', 'confirm', 'confirmed', 'correct', 'right', 'save', 'haan', 'han', 'ha', 'haa', 'ji', 'sari', 'seri', 'aama', 'aamaa', 'ama', 'हाँ', 'हां', 'हा', 'जी', 'ठीक', 'ஆமா', 'ஆம்', 'சரி']);

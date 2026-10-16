@@ -108,7 +108,7 @@ describe('voice turns: nothing is written until the farmer says yes', () => {
 
     // The hosted backend stores state between requests; the "yes" arrives in a new agent.
     const state = JSON.parse(JSON.stringify(agent.exportState()));
-    const heldId = state.pending.args.clientRequestId;
+    const heldId = state.pending.changes[0].args.clientRequestId;
     const next = new FarmAgent({ tools, model, state, now: () => NOW });
     const done = await next.handle('yes', { confirmWrites: true });
     expect(done.toolCalls[0]!.args.clientRequestId).toBe(heldId);
@@ -122,5 +122,58 @@ describe('voice turns: nothing is written until the farmer says yes', () => {
     const done = await agent.handle('yes', { confirmWrites: true });
     expect(done.reply).toMatch(/^Nothing was saved\./);
     expect(await expensesToday()).toHaveLength(0);
+  });
+});
+
+describe('several changes in one spoken message (live phone test, 2026-10-16)', () => {
+  const threeExpenses: ModelReply = {
+    stopReason: 'tool_use',
+    content: [
+      { type: 'tool_use', id: 't1', name: 'record_expense', input: { amountRupees: 3500, category: 'other', note: 'salt' } },
+      { type: 'tool_use', id: 't2', name: 'record_expense', input: { amountRupees: 6000, category: 'feed' } },
+      { type: 'tool_use', id: 't3', name: 'record_expense', input: { amountRupees: 400, category: 'medicine', note: 'vaccination' } },
+    ],
+  };
+
+  it('reads all of them back in one question and saves all on one "yes"', async () => {
+    const { agent, expensesToday } = setup(new ScriptedModel([threeExpenses]));
+    const ask = await agent.handle('today I spent 3500 for salt, 6000 for feed and 400 for the vaccination', { confirmWrites: true });
+    expect(ask.reply).toBe(
+      'Shall I record 3 expenses for today: ₹3,500.00 on other, ₹6,000.00 on feed and ₹400.00 on medicine? Say yes to save them, or no to cancel.',
+    );
+    expect(await expensesToday()).toHaveLength(0);
+
+    const done = await agent.handle('haan', { confirmWrites: true });
+    expect(done.toolCalls).toHaveLength(3);
+    expect(done.reply).toBe(
+      'Recorded ₹3,500.00 on other for 2026-10-14. Recorded ₹6,000.00 on feed for 2026-10-14. Recorded ₹400.00 on medicine for 2026-10-14.',
+    );
+    expect((await expensesToday()).map((e) => e.amountPaise).sort((a, b) => a - b)).toEqual([40000, 350000, 600000]);
+  });
+
+  it('says exactly which ones were not saved when the server refuses some', async () => {
+    const mixed: ModelReply = {
+      stopReason: 'tool_use',
+      content: [
+        { type: 'tool_use', id: 't1', name: 'record_expense', input: { amountRupees: 600, category: 'feed' } },
+        { type: 'tool_use', id: 't2', name: 'record_expense', input: { amountRupees: 50000000, category: 'fuel' } },
+      ],
+    };
+    const { agent, expensesToday } = setup(new ScriptedModel([mixed]));
+    await agent.handle('600 on feed and 5 crore on diesel', { confirmWrites: true });
+    const done = await agent.handle('yes', { confirmWrites: true });
+    expect(done.reply).toMatch(/^Recorded ₹600\.00 on feed for 2026-10-14\. Not saved: /);
+    expect(await expensesToday()).toHaveLength(1);
+  });
+
+  it('confirms a conversation stored in the older single-change format', async () => {
+    const { tools, expensesToday } = setup();
+    const state = {
+      history: [],
+      pending: { name: 'record_expense', args: { amountRupees: 250, category: 'feed', clientRequestId: 'agent-legacy-0001' }, prompt: 'Shall I…', mode: 'fallback' },
+    };
+    const agent = new FarmAgent({ tools, state: state as never, now: () => NOW });
+    expect((await agent.handle('yes', { confirmWrites: true })).confirmed).toBe(true);
+    expect(await expensesToday()).toMatchObject([{ amountPaise: 25000 }]);
   });
 });
