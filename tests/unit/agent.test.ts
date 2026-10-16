@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanModelText, FarmAgent, numbersIn } from '../../src/agent/agent.js';
+import { claimsSuccess, cleanModelText, FarmAgent, numbersIn } from '../../src/agent/agent.js';
 import { FarmMcpClient } from '../../src/agent/mcp-client.js';
 import type { AgentModel, ChatBlock, ModelReply, ModelRequest } from '../../src/agent/model.js';
 import { handleMcpRequest } from '../../src/mcp/http.js';
@@ -203,4 +203,43 @@ it('continues a conversation from exported state (as the stateless chat backend 
   const turn = await next.handle('no, it was 900');
   expect(turn.reply).toContain('₹2,500.00 → ₹900.00');
   expect(await expensesToday()).toMatchObject([{ amountPaise: 90000 }]);
+});
+
+describe('never claims a change the server refused', () => {
+  it('replaces "has been updated" after a failed correction with the server\'s reason (live bug, 2026-10-16)', async () => {
+    const model = new ScriptedModel([
+      use('record_farm_activity', { activityType: 'other', animalOrField: 'Lakshmi cow', note: 'New calf born' }),
+      say('The birth of the new calf has been recorded.'),
+      (req) => {
+        const actId = /act_\d{8}_[0-9A-Z]{26}/.exec(JSON.stringify(req.messages))![0];
+        return use('correct_entry', { entryId: actId, newNote: 'calf named Seetha' });
+      },
+      say("The record of the new calf's birth has been updated to include the name Seetha, but I'm unable to edit activities directly."),
+    ]);
+    const { agent } = setup(model);
+    await agent.handle('New calf born for Lakshmi cow');
+    const turn = await agent.handle("Lakshmi's calf is named Seetha");
+    expect(turn).toMatchObject({ claimCheck: 'replaced', reply: 'Nothing was saved. Only expenses can be corrected; activities cannot be edited yet.' });
+  });
+
+  it('keeps an honest reply or a question after a failed write', async () => {
+    const model = new ScriptedModel([use('record_expense', { amountRupees: -5, category: 'feed' }), say('That amount looks wrong. How much did you spend on feed?')]);
+    const { agent } = setup(model);
+    const turn = await agent.handle('spent minus 5 on feed');
+    expect(turn.claimCheck).toBeUndefined();
+    expect(turn.reply).toBe('That amount looks wrong. How much did you spend on feed?');
+  });
+
+  it.each([
+    ["The record has been updated to include the name Seetha.", true],
+    ['I recorded ₹800.00 for medicine.', true],
+    ['Saved it for you.', true],
+    ['Recorded ₹2,500.00 on feed.', true],
+    ['It was successfully saved.', true],
+    ["I couldn't update the record because activities cannot be edited.", false],
+    ['The record was not changed.', false],
+    ['Which expense do you want to correct?', false],
+  ])('claimsSuccess(%j) is %s', (text, expected) => {
+    expect(claimsSuccess(text)).toBe(expected);
+  });
 });

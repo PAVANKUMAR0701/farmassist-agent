@@ -39,7 +39,13 @@ The first round scored Nova Lite at 10/11, then 8/11, and Nova Micro at 8/11, th
 | `health_check` was called for nothing (+3 s) | It was offered to the model | Hidden from the model |
 | "I spent 700" was recorded as `other` | No rule against defaulting | Prompt: use `other` only when the farmer says what it was |
 | Totals invented from `list_expenses` rows (₹29,600 etc.), caught by the number check | The model added up a partial list | The prompt sends "how much" questions to the summary tools; lists aren't totalled |
+| **Live:** "has been updated to include the name Seetha" after the server *refused* the change (activities can't be edited) | Nothing checked claims, only numbers | `claimsSuccess` guard: if every write in the turn failed, a success claim is replaced by "Nothing was saved." plus the server's reason. The prompt now says to record new details as a new activity |
+| A first wording of that rule ("cannot be changed") made Nova Lite refuse past-dated expenses (vet case 0/3) | The negative wording primed a made-up restriction | Reworded positively, with "past dates are fine" stated (back to 3/3) |
 | After a blocked reply with no tool calls, the farmer got the help text | The fallback text was generic | The deterministic parser answers instead (e.g. "What was the ₹700 for?") |
+
+## Re-evaluation after the live calf-naming bug (12 cases × 3 runs)
+
+Nova Lite: **34/36**, median 1.6 s. The new "calf is named Seetha" case passes 3/3 (it records a new activity, and the reply is true). "List a month" stays at 1/3: Nova Lite sometimes totals or numbers the 20 listed rows. The number guard replaced every one of those replies with the server's own line, so the farmer never saw a wrong figure.
 
 ## Live end-to-end check
 

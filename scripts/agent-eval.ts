@@ -65,6 +65,18 @@ const cases: Case[] = [
     check: (t) => expectCall(t, 'record_farm_activity', { activityType: 'vaccination', date: D }) ?? (/brown cow/i.test(String(call(t, 'record_farm_activity')!.args.animalOrField)) ? undefined : 'animalOrField is not "brown cow"'),
   },
   {
+    // Live bug 2026-10-16: the model tried to edit the activity (refused) and then claimed it was updated.
+    name: 'new detail about an animal is recorded, not claimed',
+    messages: [`New calf born to Lakshmi on ${D}`, `Lakshmi's calf born on ${D} is named Seetha`],
+    check: (t) => {
+      if (t.claimCheck) return 'claimed a change the server refused (reply replaced)';
+      const added = call(t, 'record_farm_activity');
+      return added && /seetha/i.test(`${added.args.note ?? ''} ${added.args.animalOrField ?? ''}`)
+        ? undefined
+        : `expected a new activity mentioning Seetha, got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args, c.result.isError ? 'ERROR' : 'ok']))}`;
+    },
+  },
+  {
     name: 'Hinglish expense',
     messages: [`${D} ko 300 rupaye ka diesel liya`],
     check: (t) => expectCall(t, 'record_expense', { amountRupees: 300, category: 'fuel', date: D }),

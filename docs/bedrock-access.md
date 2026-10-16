@@ -54,6 +54,8 @@ The deployed chat function must not hold that IAM user's keys. Instead it assume
 
 ### Cross-account role for the deployed agent
 
+**In use since 2026-10-16:** `arn:aws:iam::231427841372:role/Pavan_BedRock_MCP_Role`, created by the account owner with the two policies below (also saved as [infra/bedrock-account/](../infra/bedrock-account/)). It was confirmed working by live signed-in chats answered by Nova Lite, with no Bedrock errors in the chat function's logs.
+
 This needs an **admin of the Bedrock account (231427841372)**. The `Pavan_BedRock_MCP` user cannot create roles.
 
 Role name: `farmassist-agent-bedrock`

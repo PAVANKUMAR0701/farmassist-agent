@@ -21,6 +21,9 @@ export const agentSystemPrompt = (today: string) => [
   '- Never calculate, estimate or round totals yourself. Quote amounts exactly as the tool results write them (for example ₹2,500.00).',
   '- Only record an expense when the farmer has stated the amount. If the amount or category is unclear, ask a short question instead of guessing. Use the category "other" only when the farmer says what it was and no other category fits.',
   '- To correct an expense, use its entryId from an earlier tool result in this conversation. Never invent ids.',
+  '- New records may have any date up to today, including dates in the past. Only future dates are refused.',
+  '- To add details to an earlier activity (for example a calf\'s name), record a new activity (type "other" if nothing else fits) with the details in the note; earlier activities stay as they were.',
+  '- If a tool returns an error, say plainly that nothing was saved and why. Never say something was recorded, updated or saved unless a tool result confirms it.',
   '- For a whole month or another explicit range, pass "from" and "to" (YYYY-MM-DD) and no "period".',
   '- For "how much" or "what did I spend" questions, call get_expense_summary (or get_daily_summary for one day) and repeat its total. list_expenses is only for showing entries: mention how many there are and at most three of them, and never total them.',
   '- Reply in 1 to 3 short, plain sentences: no markdown, lists or headings, and never mention entry ids. Do not give veterinary, medical or financial advice.',
@@ -30,6 +33,20 @@ export const agentSystemPrompt = (today: string) => [
 const HIDDEN_FROM_MODEL = new Set(['health_check']);
 /** Tools that write; the agent gives each call a clientRequestId so a retry can never record twice. */
 const WRITE_TOOLS = new Set(['record_expense', 'record_farm_activity']);
+/** Every tool that changes the ledger (creates or corrects). */
+const CHANGING_TOOLS = new Set([...WRITE_TOOLS, 'correct_entry']);
+
+/** True when a reply says something was saved or changed ("has been updated", "I recorded", ...). */
+export function claimsSuccess(text: string): boolean {
+  const done = '(recorded|updated|saved|corrected|added|changed|logged|noted|stored)';
+  return new RegExp(`\\b(has|have|had|was|were|is|are)\\s+(now\\s+)?(been\\s+)?(successfully\\s+)?${done}\\b|\\b(i|i've|i have|we've)\\s+(successfully\\s+)?${done}\\b|^\\s*${done}\\b`, 'i').test(text);
+}
+
+/** "only expenses can be corrected" -> "Only expenses can be corrected." */
+const sentence = (text: string) => {
+  const t = text.replace(/^MCP error -?\d+:\s*/, '').trim();
+  return t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? '' : '.'}` : '';
+};
 const MAX_HISTORY_MESSAGES = 24;
 
 export interface AgentToolCall {
@@ -49,6 +66,8 @@ export interface AgentTurn {
   numberCheck?: 'passed' | 'replaced';
   /** The numbers that failed the check (diagnostics for local tools; never logged in production). */
   unverifiedNumbers?: string[];
+  /** 'replaced' when the model claimed a change that the server refused. */
+  claimCheck?: 'replaced';
 }
 
 /** Everything the agent remembers between messages; stored by the hosted chat backend between requests. */
@@ -196,6 +215,14 @@ export class FarmAgent {
    * deterministic parser answers instead, e.g. with its own clarifying question.
    */
   private async checkedModelReply(text: string, message: string, toolCalls: AgentToolCall[]): Promise<AgentTurn> {
+    // A ledger must never say something was saved when it was not: if every write this turn failed,
+    // a reply that claims success is replaced by the server's own reason.
+    const writes = toolCalls.filter((c) => CHANGING_TOOLS.has(c.name));
+    const failed = writes.filter((c) => c.result.isError);
+    if (failed.length > 0 && failed.length === writes.length && claimsSuccess(text)) {
+      console.warn(JSON.stringify({ level: 'warn', message: 'Model reply replaced: claimed success after a failed write' }));
+      return { reply: `Nothing was saved. ${sentence(serverText(failed[0]!.result))}`, mode: 'model', toolCalls, claimCheck: 'replaced' };
+    }
     const allowed = new Set([...numbersIn(message), ...toolCalls.flatMap((c) => numbersIn(c.result.text))]);
     const unverified = numbersIn(text).filter((n) => !allowed.has(n));
     if (text && unverified.length === 0) return { reply: text, mode: 'model', toolCalls, numberCheck: 'passed' };
