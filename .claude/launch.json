@@ -4,9 +4,23 @@
     {
       "name": "farmassist-web",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["tsx", "scripts/local-chat-server.ts", "--seed"],
+      "runtimeArgs": [
+        "tsx",
+        "scripts/local-chat-server.ts",
+        "--seed"
+      ],
       "port": 5173,
       "url": "http://127.0.0.1:5173"
+    },
+    {
+      "name": "farmassist-web-nova",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set AGENT_MODEL_ID=apac.amazon.nova-lite-v1:0&& set BEDROCK_AWS_PROFILE=M80PocBedrockKeys&& set BEDROCK_REGION=ap-south-1&& set CHAT_PORT=5174&& npx tsx scripts/local-chat-server.ts --seed"
+      ],
+      "port": 5174,
+      "url": "http://127.0.0.1:5174"
     }
   ]
 }

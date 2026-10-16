@@ -84,7 +84,28 @@ Asked for during phone testing ("add herds and name them, edit them, crops like 
 - Tests: 329 in 25 files.
 - **Demo data to clean before recording:** test entries on the demo farm (smoke-test expenses and vaccinations, evaluation entries dated January 2025 and today, a "Seetha" calf from the evaluation, and a "Smoke Test Cow" marked died).
 
-## Step 6: Weekly insights on the chosen model — not started
-## Step 7: Multimodal retrieval — not started
-## Step 8: Crop and cattle image analysis — not started
+## Step 6: Weekly insights on the chosen model — built and deployed; live wording waits on one trust-policy change (2026-10-17)
+
+- `npm run narration-eval` runs the tool's own retry loop and guards on 5 realistic weeks. Both Nova models passed the number guard 10/10, yet some drafts attached real numbers to the wrong things ("₹85,450 on equipment" when that was the week's total, "Labour and seeds together cost ₹1,200", "feed was 125% higher", "no earlier week" when there was one).
+- **Meaning guard** (`src/domain/meaning-guard.ts`): an amount next to a category must be that category's total, a percentage next to a category must be its share, and claims about last week and "too few records" must match the facts. A failing draft gets one retry with the reason, then the template. Two false positives found in the evaluation ("₹2,500 on feed and ₹800 on medicine") were fixed and added as tests.
+- Result over 3 runs: **Nova Lite 15/15 after one retry** (13/15 first try), so Nova Lite does the wording too; Micro made more mistakes the guards had to catch.
+- Deployed with `BedrockModelId=apac.amazon.nova-lite-v1:0` and `BedrockRoleArn=…Pavan_BedRock_MCP_Role`. **Waiting on:** the role's trust policy must also allow the MCP function's role (see bedrock-access.md). Until then `weekly_insights` reports `bedrock_unavailable` and uses the guarded template; once the trust is added it switches to Nova Lite with no redeploy.
+
+## Step 7: Multimodal retrieval — built; embeddings wait on model access (2026-10-17)
+
+- `src/knowledge/corpus.ts`: 13 curated notes on crop and cattle problems common in India (paddy blast, brown spot, bacterial blight, stem borer, ragi blast, sugarcane red rot, nitrogen deficiency, FMD, lumpy skin disease, mastitis, ticks, bloat, heat stress). Each has visible signs, safe first steps, when to call a professional, and the official source to read. FMD and LSD are marked as diseases that must be reported. Written for FarmAssist in plain words; no copied text, and no reference images (those would need properly licensed photos).
+- `src/knowledge/retrieval.ts`: a `Retriever` interface with a BM25 keyword retriever (needs no model), an in-memory vector retriever and a reciprocal-rank hybrid. No vector database: a few dozen notes fit in memory.
+- `src/knowledge/nova-embedder.ts`: Amazon Nova Multimodal Embeddings (`amazon.nova-2-multimodal-embeddings-v1:0`, **us-east-1 only**), text and image in one space. `npm run build-knowledge-index` writes the vectors once (13 calls, a fraction of a cent). The deployed switch `KnowledgeEmbeddings=nova` is off.
+- `npm run retrieval-eval` (24 labelled farmer descriptions): **keyword hit@1 23/24, hit@3 24/24**. Honest caveat: the same author wrote the notes and the queries, so this is optimistic. Real farmer descriptions and photos are the true test.
+- **Waiting on:** the Bedrock account must allow the embeddings model (a live call returned AccessDenied). Photo help works without it.
+
+## Step 8: Crop and cattle photo help — done (2026-10-17)
+
+- **Design: the model describes, the notes advise.** Nova Lite (vision through Converse, already allowed) returns structured observations only: subject, what is shown, visible signs, urgent signs, photo quality and confidence (`src/agent/photo-help.ts`). Code then retrieves notes and puts the answer together. The answer gives what can be seen, what it *may* be ("I cannot be sure from a photo"), the note's safe first steps, when to call the vet or agriculture officer, and "not a diagnosis". Urgent signs come first; diseases that must be reported are marked urgent; an unclear or poor photo gets a request for a better one; weak matches are not shown; notes for a different crop or animal than the one named are dropped.
+- **Seen live and fixed:** the first vision prompt contained example wording, and Nova copied it into its "observation". Examples were removed. Ragi blast was offered for a paddy photo; that is now filtered.
+- `POST /api/photo` (signed in only): JPEG, PNG or WebP up to 1.5 MB, checked by its first bytes, not its name. The browser shrinks photos to 1280 px first. If the vision model fails, the farmer's own words are used and the answer says so. A storage failure doesn't block the answer.
+- Storage: new **private S3 bucket**, verified on AWS: all public access blocked, AES-256, TLS-only bucket policy, lifecycle deletion after 90 days (`PhotoRetentionDays`), kept if the stack is deleted. The chat role may only `PutObject` under `photos/`.
+- UI: a 📷 button in Chat; any typed text goes along as the note; urgent answers get a red border; one line per part of the answer.
+- Checked: 365 tests (photo parsing, answer composition and escalation, API validation and storage failure). Live: generated pictures through Nova Lite vision, and the full UI path in the browser (lumps on skin → "Lumpy skin disease … must be reported … call the veterinarian … not a diagnosis", marked urgent).
+- **Not claimed:** diagnostic accuracy. That needs evaluation on labelled real farm photos, which this project does not have.
 ## Step 9: Release readiness — not started

@@ -11,6 +11,9 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { FarmMcpClient } from '../src/agent/mcp-client.js';
 import { createAgentModelFromEnv } from '../src/agent/model.js';
+import { createVisionModelFromEnv } from '../src/agent/photo-help.js';
+import { InMemoryPhotoStore } from '../src/chat/photos.js';
+import { KeywordRetriever } from '../src/knowledge/retrieval.js';
 import { handleChatRequest, type ChatAppDeps } from '../src/chat/app.js';
 import { DevAuthenticator } from '../src/chat/auth.js';
 import { InMemoryConversationStore } from '../src/chat/conversations.js';
@@ -71,6 +74,9 @@ async function seedSampleFarm(): Promise<void> {
 if (process.argv.includes('--seed') && !remoteMcpUrl) await seedSampleFarm();
 
 const deps: ChatAppDeps = {
+  vision: createVisionModelFromEnv(),
+  retriever: new KeywordRetriever(),
+  photos: new InMemoryPhotoStore(),
   auth: new DevAuthenticator('dev-local', { userId: 'dev-user', farmId, name: 'Local dev' }),
   conversations: new InMemoryConversationStore(),
   toolsFor: (id) => (id === farmId ? tools : undefined),

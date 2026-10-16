@@ -5,6 +5,7 @@
  *   POST /api/chat                 one agent turn: { message, conversationId?, voice? }
  *                                  (voice: true holds ledger changes until the farmer says yes)
  *   POST /api/read                 one read-only MCP tool call for screens: { tool, args }
+ *   POST /api/photo                photo help: { image (base64), format, note?, subject? }
  *
  * Every /api/chat and /api/read call needs a valid sign-in token. The backend then talks to the MCP server
  * as an MCP client with the farm's MCP token, which never reaches the browser.
@@ -13,6 +14,10 @@ import { ulid } from 'ulid';
 import { FarmAgent } from '../agent/agent.js';
 import type { FarmToolClient } from '../agent/mcp-client.js';
 import type { AgentModel } from '../agent/model.js';
+import { photoHelp, type ImageFormat, type VisionModel } from '../agent/photo-help.js';
+import { KeywordRetriever, type Retriever } from '../knowledge/retrieval.js';
+import { todayInFarmTimeZone } from '../shared/time.js';
+import { looksLike, MAX_PHOTO_BYTES, type PhotoStore } from './photos.js';
 import type { ChatAuthenticator, ChatUser } from './auth.js';
 import { CONVERSATION_ID, type ConversationStore } from './conversations.js';
 
@@ -36,6 +41,10 @@ export interface ChatAppDeps {
   assets: Record<string, StaticAsset>;
   publicConfig: PublicConfig;
   now?: () => Date;
+  /** Photo help (optional): the vision model describes, the retriever finds reference notes, the store keeps the photo. */
+  vision?: VisionModel | undefined;
+  retriever?: Retriever | undefined;
+  photos?: PhotoStore | undefined;
 }
 
 /** Read-only tools the screens may call directly. Writes only ever happen through the agent. */
@@ -52,6 +61,8 @@ export const READ_TOOLS = new Set([
 ]);
 export const MAX_MESSAGE_LENGTH = 500;
 const MAX_BODY_BYTES = 16 * 1024;
+/** A photo is sent as base64 (a third larger than the file) inside JSON. */
+const MAX_PHOTO_BODY_BYTES = Math.ceil((MAX_PHOTO_BYTES * 4) / 3) + 4096;
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -73,7 +84,7 @@ function contentSecurityPolicy(config: PublicConfig): string {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self'",
-    "img-src 'self' data:",
+    "img-src 'self' data: blob:",
     `connect-src 'self'${cognito}`,
     "base-uri 'none'",
     "form-action 'none'",
@@ -81,9 +92,9 @@ function contentSecurityPolicy(config: PublicConfig): string {
   ].join('; ');
 }
 
-async function readJsonBody(request: Request): Promise<Record<string, unknown> | undefined> {
+async function readJsonBody(request: Request, maxBytes = MAX_BODY_BYTES): Promise<Record<string, unknown> | undefined> {
   const text = await request.text();
-  if (text.length > MAX_BODY_BYTES) return undefined;
+  if (text.length > maxBytes) return undefined;
   try {
     const value: unknown = JSON.parse(text);
     return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
@@ -112,17 +123,18 @@ export async function handleChatRequest(request: Request, deps: ChatAppDeps): Pr
     return problem(404, 'Not found');
   }
 
-  if (request.method !== 'POST' || (path !== '/api/chat' && path !== '/api/read')) return problem(path.startsWith('/api/') ? 405 : 404, 'Not found');
+  if (request.method !== 'POST' || !['/api/chat', '/api/read', '/api/photo'].includes(path)) return problem(path.startsWith('/api/') ? 405 : 404, 'Not found');
 
   const user = await deps.auth.authenticate(request.headers.get('authorization'));
   if (!user) return problem(401, 'Please sign in again.');
   const tools = deps.toolsFor(user.farmId);
   if (!tools) return problem(403, 'This account is not linked to a farm that FarmAssist can open yet.');
 
-  const body = await readJsonBody(request);
-  if (!body) return problem(400, 'The request was not valid JSON.');
+  const body = await readJsonBody(request, path === '/api/photo' ? MAX_PHOTO_BODY_BYTES : MAX_BODY_BYTES);
+  if (!body) return problem(400, path === '/api/photo' ? 'The photo is too large or was not sent correctly. Please try a smaller photo.' : 'The request was not valid JSON.');
 
   try {
+    if (path === '/api/photo') return await photo(body, user, deps);
     return path === '/api/chat' ? await chat(body, user, tools, deps) : await read(body, tools);
   } catch (error) {
     console.error(JSON.stringify({ level: 'error', message: 'Chat backend request failed', path, error: error instanceof Error ? error.name : 'Unknown' }));
@@ -166,4 +178,26 @@ async function read(body: Record<string, unknown>, tools: FarmToolClient): Promi
   const result = await tools.callTool(tool, args as Record<string, unknown>);
   if (result.isError) return json(422, { error: result.text });
   return json(200, { text: result.text.split('\n')[0], data: result.structured ?? {} });
+}
+
+const FORMATS: ImageFormat[] = ['jpeg', 'png', 'webp'];
+
+async function photo(body: Record<string, unknown>, user: ChatUser, deps: ChatAppDeps): Promise<Response> {
+  const format = body.format;
+  if (typeof format !== 'string' || !FORMATS.includes(format as ImageFormat)) return problem(400, 'Send a JPEG, PNG or WebP photo.');
+  const base64 = typeof body.image === 'string' ? body.image.replace(/^data:[^,]*,/, '') : '';
+  const bytes = new Uint8Array(Buffer.from(base64, 'base64'));
+  if (bytes.length === 0 || bytes.length > MAX_PHOTO_BYTES) return problem(400, 'The photo is empty or too large. Please try a smaller photo.');
+  if (!looksLike(bytes, format as ImageFormat)) return problem(400, 'That file is not a photo of the type it claims to be.');
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : undefined;
+  const subject = body.subject === 'crop' || body.subject === 'animal' ? body.subject : undefined;
+
+  const today = todayInFarmTimeZone(deps.now?.() ?? new Date());
+  // Keeping the photo is not essential to the answer: a storage failure is logged, not shown.
+  const photoId = await deps.photos?.put(user.farmId, user.userId, bytes, format as ImageFormat, today).catch((error: unknown) => {
+    console.error(JSON.stringify({ level: 'error', message: 'Photo not stored', error: error instanceof Error ? error.name : 'Unknown' }));
+    return undefined;
+  });
+  const answer = await photoHelp({ vision: deps.vision, retriever: deps.retriever ?? new KeywordRetriever() }, { bytes, format: format as ImageFormat }, note || undefined, subject);
+  return json(200, { ...(photoId ? { photoId } : {}), ...answer });
 }

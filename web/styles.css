@@ -168,3 +168,11 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .milk-line { display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--border); margin: 0; }
 .breakdown li.overdue { color: var(--error-text); }
 .entry .harvest { font-size: 0.9rem; color: var(--green-dark); }
+
+/* Photo help */
+.composer { display: flex; gap: 8px; }
+.composer input[type='text'] { flex: 1; min-width: 0; }
+.hidden-file { display: none; }
+.bubble img.photo { display: block; max-width: 100%; max-height: 220px; border-radius: 10px; }
+.bubble.urgent { border: 2px solid var(--error-text); background: var(--error-bg); }
+.bubble p.lines { white-space: pre-line; }

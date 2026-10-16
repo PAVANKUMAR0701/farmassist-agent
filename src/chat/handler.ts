@@ -3,15 +3,22 @@
  * Settings come from environment variables set by template.yaml; the MCP token is read from SSM once per instance.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { S3Client } from '@aws-sdk/client-s3';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { LambdaFunctionURLEvent } from 'aws-lambda';
 import { FarmMcpClient } from '../agent/mcp-client.js';
 import { createAgentModelFromEnv } from '../agent/model.js';
+import { createVisionModelFromEnv } from '../agent/photo-help.js';
+import { NOVA_EMBEDDINGS_REGION, NovaMultimodalEmbedder } from '../knowledge/nova-embedder.js';
+import { createRetriever, type VectorIndex } from '../knowledge/retrieval.js';
+import vectorIndex from '../knowledge/vector-index.json' with { type: 'json' };
+import { createBedrockClientFromEnv } from '../services/bedrock-client.js';
 import { toLambdaResult, toWebRequest, type FunctionUrlResult } from '../lambda/function-url.js';
 import { handleChatRequest, type ChatAppDeps } from './app.js';
 import { CognitoAuthenticator } from './auth.js';
 import { DynamoConversationStore } from './conversations.js';
+import { S3PhotoStore } from './photos.js';
 import { WEB_ASSETS } from './web-assets.generated.js';
 
 function requiredEnv(name: string): string {
@@ -42,6 +49,13 @@ async function loadDeps(): Promise<ChatAppDeps> {
     ),
     toolsFor: (farmId) => (farmId === mcpFarmId ? (mcpClient ??= new FarmMcpClient({ url: mcpUrl, token: mcpToken })) : undefined),
     model: createAgentModelFromEnv(),
+    vision: createVisionModelFromEnv(),
+    // Embeddings only when switched on (KNOWLEDGE_EMBEDDINGS=nova) and an index was built; keyword search otherwise.
+    retriever: createRetriever(
+      vectorIndex as VectorIndex,
+      process.env.KNOWLEDGE_EMBEDDINGS === 'nova' ? new NovaMultimodalEmbedder(createBedrockClientFromEnv({ ...process.env, BEDROCK_REGION: NOVA_EMBEDDINGS_REGION }, 'farmassist-embeddings')) : undefined,
+    ),
+    photos: process.env.PHOTO_BUCKET ? new S3PhotoStore(new S3Client({}), process.env.PHOTO_BUCKET) : undefined,
     assets: WEB_ASSETS,
     publicConfig: { auth: 'cognito', region, userPoolClientId: clientId },
   };

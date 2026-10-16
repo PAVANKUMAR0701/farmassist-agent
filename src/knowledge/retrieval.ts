@@ -146,3 +146,13 @@ export class HybridRetriever implements Retriever {
     return [...fused.values()].sort((a, b) => b.score - a.score).slice(0, k);
   }
 }
+
+/**
+ * The retriever the app uses: keyword search always; plus vectors when an index has been built
+ * (npm run build-knowledge-index) and an embedder is given. Embeddings never become a hard dependency.
+ */
+export function createRetriever(index: VectorIndex, embedder?: Embedder): Retriever {
+  const keyword = new KeywordRetriever();
+  if (!embedder || Object.keys(index.vectors).length === 0 || index.modelId !== embedder.modelId) return keyword;
+  return new HybridRetriever([keyword, new VectorRetriever(embedder, index)]);
+}

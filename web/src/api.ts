@@ -220,3 +220,17 @@ export function sendChat(message: string, conversationId?: string, voice = false
 export function readTool<T = Record<string, unknown>>(tool: string, args: Record<string, unknown> = {}): Promise<{ text: string; data: T }> {
   return post<{ text: string; data: T }>('/api/read', { tool, args });
 }
+
+export interface PhotoReply {
+  photoId?: string;
+  reply: string;
+  urgent: boolean;
+  notifiable: boolean;
+  needsBetterPhoto: boolean;
+  matches: Array<{ id: string; title: string; readMore: string }>;
+}
+
+/** Sends a (shrunk) photo for photo help. `note` is what the farmer typed or said about it. */
+export function sendPhoto(imageBase64: string, format: 'jpeg' | 'png' | 'webp', note?: string): Promise<PhotoReply> {
+  return post<PhotoReply>('/api/photo', { image: imageBase64, format, ...(note ? { note } : {}) });
+}

@@ -63,6 +63,19 @@ Parameters:
       Optional IAM role in the Bedrock account that the chat function assumes to call AgentModelId.
       It must trust the ChatFunctionRoleArn output. Empty means Bedrock is called in this account.
 
+  PhotoRetentionDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    Description: Photos sent for photo help are deleted automatically after this many days.
+  KnowledgeEmbeddings:
+    Type: String
+    Default: 'off'
+    AllowedValues: ['off', 'nova']
+    Description: >
+      'nova' adds Amazon Nova Multimodal Embeddings (us-east-1) to photo-help retrieval, through AgentBedrockRoleArn.
+      Needs a built vector index and the model allowed for that role. 'off' uses keyword search only.
+
 Conditions:
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
   HasAgentModel: !Not [!Equals [!Ref AgentModelId, '']]
@@ -240,6 +253,50 @@ Resources:
       # custom:farmId is deliberately not writable by users.
       WriteAttributes: [name]
 
+  # ---- Photos for photo help -----------------------------------------------------------------------
+
+  # Private, encrypted, deleted after PhotoRetentionDays. Kept on stack deletion (it may hold farm photos).
+  PhotoBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: delete-old-photos
+            Status: Enabled
+            ExpirationInDays: !Ref PhotoRetentionDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  PhotoBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PhotoBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt PhotoBucket.Arn, !Sub '${PhotoBucket.Arn}/*']
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
   # ---- Hosted chat backend + web client ------------------------------------------------------------
 
   ChatFunctionLogGroup:
@@ -274,6 +331,8 @@ Resources:
           AGENT_MODEL_ID: !Ref AgentModelId
           BEDROCK_REGION: !Ref BedrockRegion
           BEDROCK_ROLE_ARN: !Ref AgentBedrockRoleArn
+          PHOTO_BUCKET: !Ref PhotoBucket
+          KNOWLEDGE_EMBEDDINGS: !Ref KnowledgeEmbeddings
           NODE_OPTIONS: --enable-source-maps
       # Page and API share this one origin, so no CORS is needed. API calls are checked against Cognito in code.
       FunctionUrlConfig:
@@ -285,6 +344,10 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem]
               Resource: !GetAtt LedgerTable.Arn
+            # Photo help: write new photos only (no read, list or delete).
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${PhotoBucket.Arn}/photos/*'
             - Effect: Allow
               Action: ssm:GetParameter
               Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApiTokenParameterName}

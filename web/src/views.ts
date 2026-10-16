@@ -2,7 +2,8 @@
  * The four screens. Every amount shown is a display string computed by the server (totalDisplay,
  * amountDisplay): the client never adds anything up.
  */
-import { ApiError, readTool, sendChat, type ChatReply } from './api.js';
+import { ApiError, readTool, sendChat, sendPhoto, type ChatReply } from './api.js';
+import { shrinkPhoto } from './photo.js';
 import { append, clear, h, label, notice, shortDate, spinner } from './dom.js';
 import {
   isEcho,
@@ -62,7 +63,7 @@ export function chatView(): HTMLElement {
   const send = h('button', { type: 'submit', class: 'primary' }, 'Send');
   const prefs = loadVoicePrefs();
   let voiceInput = speechInputSupported();
-  const idlePlaceholder = voiceInput ? 'Type or tap the mic…' : 'Type what you spent or did…';
+  const idlePlaceholder = voiceInput ? 'Type or speak…' : 'Type here…';
   input.placeholder = idlePlaceholder;
   const mic = h('button', { type: 'button', class: 'mic', 'aria-label': 'Speak', title: 'Speak' }, '🎤');
   let listening: Listening | undefined;
@@ -172,7 +173,6 @@ export function chatView(): HTMLElement {
         if (voiceError.permanent) {
           voiceInput = false;
           mic.remove();
-          form.classList.add('no-mic');
         }
       })
       .finally(() => {
@@ -182,6 +182,41 @@ export function chatView(): HTMLElement {
   }
 
   mic.addEventListener('click', () => (listening ? listening.stop() : startListening()));
+
+  // Photo help: a sick animal or a crop problem. Any text in the box goes along as the farmer's note.
+  const photoInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'hidden-file', 'aria-label': 'Photo' });
+  const camera = h('button', { type: 'button', class: 'mic', 'aria-label': 'Send a photo of a sick animal or crop', title: 'Photo help' }, '📷');
+  camera.addEventListener('click', () => photoInput.click());
+  photoInput.addEventListener('change', async () => {
+    const file = photoInput.files?.[0];
+    photoInput.value = '';
+    if (!file) return;
+    const note = input.value.trim();
+    input.value = '';
+    stopSpeaking();
+    let shrunk: { base64: string; previewUrl: string };
+    try {
+      shrunk = await shrinkPhoto(file);
+    } catch {
+      bubble('bot', notice('error', 'That photo could not be opened. Please try another one.'));
+      return;
+    }
+    bubble('me', h('img', { class: 'photo', src: shrunk.previewUrl, alt: 'Photo sent for help' }), note ? h('p', {}, note) : null);
+    const pending = bubble('bot', h('p', { class: 'typing' }, 'Looking at the photo…'));
+    camera.disabled = true;
+    try {
+      const answer = await sendPhoto(shrunk.base64, 'jpeg', note || undefined);
+      pending.remove();
+      const box = bubble('bot', h('p', { class: 'lines' }, answer.reply));
+      if (answer.urgent) box.classList.add('urgent');
+      if (prefs.speakReplies && lastSpoken) void speak(answer.reply, prefs.lang); // only for farmers already using voice
+    } catch (error) {
+      pending.remove();
+      bubble('bot', notice('error', errorText(error)));
+    } finally {
+      camera.disabled = false;
+    }
+  });
 
   const newChat = () => {
     stopSpeaking();
@@ -225,7 +260,7 @@ export function chatView(): HTMLElement {
         )
       : null;
 
-  const form = h('form', { class: voiceInput ? 'composer' : 'composer no-mic', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, voiceInput ? mic : null, input, send);
+  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, voiceInput ? mic : null, camera, photoInput, input, send);
   greet();
   return h(
     'section',
