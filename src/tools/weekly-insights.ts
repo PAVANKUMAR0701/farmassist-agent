@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { farmIdFromAuth } from '../auth/bearer.js';
+import { checkMeaning } from '../domain/meaning-guard.js';
 import { checkNumbers } from '../domain/number-guard.js';
 import { computeWeeklyFacts, templateNarrative, type WeeklyFacts } from '../domain/weekly-facts.js';
 import { TooManyEntriesError } from '../repositories/ledger-repository.js';
@@ -53,13 +54,17 @@ async function narrate(facts: WeeklyFacts, deps: ToolDeps): Promise<Narration> {
       return fallback('bedrock_unavailable', attempt, rejectedNumbers);
     }
     const check = checkNumbers(draft, facts);
-    if (check.ok) {
+    // Numbers that exist can still be attached to the wrong thing ("₹85,450 on equipment"): check meaning too.
+    const meaning = check.ok ? checkMeaning(draft, facts) : { ok: true, problems: [] };
+    if (check.ok && meaning.ok) {
       return { narrative: draft, narrationSource: 'bedrock', guard: { status: 'passed', attempts: attempt, rejectedNumbers }, modelId: deps.narrator.modelId };
     }
     rejectedNumbers.push(...check.unsupported);
-    // Log how many numbers failed, not the numbers themselves (they are farm data).
-    console.warn(JSON.stringify({ level: 'warn', tool: 'weekly_insights', message: 'Narration rejected by number guard', attempt, unsupportedCount: check.unsupported.length }));
-    feedback = `it contained numbers that are not in the facts: ${check.unsupported.join(', ')}.`;
+    // Log how many problems there were, not the numbers themselves (they are farm data).
+    console.warn(
+      JSON.stringify({ level: 'warn', tool: 'weekly_insights', message: 'Narration rejected', attempt, unsupportedCount: check.unsupported.length, meaningProblemCount: meaning.problems.length }),
+    );
+    feedback = check.ok ? `${meaning.problems.join('; ')}.` : `it contained numbers that are not in the facts: ${check.unsupported.join(', ')}.`;
   }
   return fallback('replaced', MAX_NARRATION_ATTEMPTS, rejectedNumbers);
 }
