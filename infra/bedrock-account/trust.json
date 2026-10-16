@@ -4,7 +4,10 @@
     {
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::381492152939:role/farmassist-dev-ChatFunctionRole-KmnaKYpptu6w"
+        "AWS": [
+          "arn:aws:iam::381492152939:role/farmassist-dev-ChatFunctionRole-KmnaKYpptu6w",
+          "arn:aws:iam::381492152939:role/farmassist-dev-McpFunctionRole-C8tHa8srmram"
+        ]
       },
       "Action": "sts:AssumeRole"
     }

@@ -52,6 +52,11 @@ Local agent runs (`npm run agent`, `npm run agent-eval`) read `AGENT_MODEL_ID` a
 
 The deployed chat function must not hold that IAM user's keys. Instead it assumes a role in the Bedrock account that trusts only the chat function's own role. The template already limits the function to `sts:AssumeRole` on the one role ARN you pass in.
 
+### Two changes still needed (2026-10-17)
+
+1. **Weekly-insights wording:** the role's trust policy must also allow the MCP function's role. Replace the trust policy of `Pavan_BedRock_MCP_Role` with [infra/bedrock-account/trust.json](../infra/bedrock-account/trust.json), which lists both Lambda roles. The MCP function is already deployed with `BedrockModelId` and `BedrockRoleArn`, so no redeploy is needed.
+2. **Retrieval embeddings:** add [infra/bedrock-account/invoke-nova-embeddings.json](../infra/bedrock-account/invoke-nova-embeddings.json) as a second inline policy on the role (for the deployed app) and on the user `Pavan_BedRock_MCP` (for building the index). Amazon Nova Multimodal Embeddings exists only in us-east-1. Then run `npm run build-knowledge-index`, `npm run retrieval-eval -- --vectors`, and redeploy with `KnowledgeEmbeddings=nova`.
+
 ### Cross-account role for the deployed agent
 
 **In use since 2026-10-16:** `arn:aws:iam::231427841372:role/Pavan_BedRock_MCP_Role`, created by the account owner with the two policies below (also saved as [infra/bedrock-account/](../infra/bedrock-account/)). It was confirmed working by live signed-in chats answered by Nova Lite, with no Bedrock errors in the chat function's logs.
