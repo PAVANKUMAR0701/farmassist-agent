@@ -89,7 +89,7 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .content { flex: 1; width: 100%; max-width: 720px; margin: 0 auto; padding: 12px 12px calc(var(--nav-height) + 16px + env(safe-area-inset-bottom)); }
 .tabs {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 2;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--nav-height) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface); border-top: 1px solid var(--border);
 }
@@ -163,3 +163,8 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px 
 /* Shown only by the local development server */
 .dev-banner { background: #fff3cd; color: #5c4400; padding: 8px 12px; font-size: 0.85rem; text-align: center; border-bottom: 1px solid #e6d28a; }
 @media (prefers-color-scheme: dark) { .dev-banner { background: #3a3110; color: #f3dd8f; border-color: #5c4d18; } }
+
+/* Farm records */
+.milk-line { display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--border); margin: 0; }
+.breakdown li.overdue { color: var(--error-text); }
+.entry .harvest { font-size: 0.9rem; color: var(--green-dark); }

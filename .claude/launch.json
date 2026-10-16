@@ -4,7 +4,7 @@
     {
       "name": "farmassist-web",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["tsx", "scripts/local-chat-server.ts"],
+      "runtimeArgs": ["tsx", "scripts/local-chat-server.ts", "--seed"],
       "port": 5173,
       "url": "http://127.0.0.1:5173"
     }

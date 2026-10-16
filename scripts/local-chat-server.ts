@@ -42,6 +42,34 @@ const tools = new FarmMcpClient({
   ...(remoteMcpUrl ? {} : { fetch: (url: string | URL, init?: RequestInit) => handleMcpRequest(new Request(url, init), localMcp) }),
 });
 
+/** `--seed`: a small sample farm, created through the real MCP tools, for trying the screens locally. */
+async function seedSampleFarm(): Promise<void> {
+  const day = (offset: number) => new Date(Date.now() - offset * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const calls: Array<[string, Record<string, unknown>]> = [
+    ['register_animal', { animals: [{ name: 'Lakshmi', type: 'cow', breed: 'HF', birthDate: '2022-07-10' }, { name: 'Maya', type: 'cow', breed: 'Jersey' }, { name: 'Geeta', type: 'cow' }, { name: 'Sita', type: 'cow', breed: 'Gir' }] }],
+    ['register_animal', { animals: [{ name: 'Seetha', type: 'calf', motherName: 'Lakshmi', birthDate: day(15) }] }],
+    ...[0, 1, 2, 3, 4, 5, 6].flatMap((d): Array<[string, Record<string, unknown>]> => [
+      ['record_milk', { litres: 8 + (d % 3) * 0.5, session: 'morning', animalName: 'Lakshmi', date: day(d) }],
+      ['record_milk', { litres: 6.5, session: 'evening', animalName: 'Lakshmi', date: day(d) }],
+      ['record_milk', { litres: 7, animalName: 'Maya', date: day(d) }],
+    ]),
+    ['record_sowing', { crop: 'paddy', variety: 'Sona Masuri', field: 'north field', areaAcres: 2, seedQuantity: 50, sownDate: day(118) }],
+    ['record_harvest', { crop: 'paddy', field: 'north field', quantity: 30, unit: 'quintal', date: day(2), final: true }],
+    ['record_sowing', { crop: 'ragi', field: 'east plot', areaAcres: 1, seedQuantity: 10, sownDate: day(60) }],
+    ['add_insurance', { animalName: 'Lakshmi', insurer: 'United India', endDate: inDays(20), premiumRupees: 1850 }],
+    ['add_reminder', { title: 'Deworm the calf', dueDate: inDays(4), animalName: 'Seetha' }],
+    ['record_expense', { amountRupees: 2500, category: 'feed', note: 'cattle feed' }],
+    ['record_expense', { amountRupees: 1200, category: 'fuel', note: 'diesel' }],
+  ];
+  for (const [name, args] of calls) {
+    const result = await tools.callTool(name, args);
+    if (result.isError) console.warn(`seed: ${name} failed: ${result.text}`);
+  }
+  console.log('Seeded a sample farm (5 animals, 7 days of milk, 2 crops, insurance, a reminder, 2 expenses).');
+}
+if (process.argv.includes('--seed') && !remoteMcpUrl) await seedSampleFarm();
+
 const deps: ChatAppDeps = {
   auth: new DevAuthenticator('dev-local', { userId: 'dev-user', farmId, name: 'Local dev' }),
   conversations: new InMemoryConversationStore(),

@@ -53,6 +53,10 @@ On the phone, the deployed guard did its job. In a fresh chat, "New lakshmi's ca
 
 Nova Lite: **39/39**, median 1.5 s, max 4.4 s per turn. Both calf cases pass 3/3, and "list a month" passed 3/3 in this round (it was the weak case before; the number guard still protects it).
 
+## With farm records (21 tools): the farm scenario
+
+`npm run farm-scenario` replays a 17-message farmer conversation in voice mode through the real agent and Nova Lite, then checks the stored records (9 checks per run). The first run scored 2/9, and each failure traced to the agent, not the model's knowledge. Nova Lite: (1) copied the agent's "Shall I…?" read-backs from its history and asked its own questions instead of calling tools; (2) asked for one animal per round, while the agent held only the first; (3) copied retry ids and animal ids from history into new requests; (4) filled optional fields with placeholders ("N/A", ₹0) and swapped premium and cover; (5) converted "30 quintal" to "30000 kg". The fixes are deterministic code rather than more prompt text (each attempt to add prompt rules made Nova Lite worse). The result: **27/27 over 3 runs**. Fix details are in [progress.md](progress.md).
+
 ## Live end-to-end check
 
 `npm run agent` with Nova Lite: "paid 1750 to the labourer on 2025-01-23" followed by "no, it was 1500". DynamoDB then held the labour expense at 150000 paise, version 2, with a `CORR#` audit item of 175000 → 150000.

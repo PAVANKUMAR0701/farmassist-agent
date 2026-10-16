@@ -67,6 +67,23 @@ Model access check, 2026-10-16, personal account, ap-south-1: the `apac.amazon.n
 - **Third phone session: four bugs fixed.** (1) The read-back said "record undefined for Lakshmi…" because Nova Lite left out the required `activityType`. Every write is now checked against the tool's own published JSON Schema (required fields, allowed values, types) before a read-back, and failures go back to the model to fix; read-backs also never print "undefined". (2) "okay nothing was saved" would have counted as a *yes*; "not", "nothing", "never" and "wait" are now negations. (3) The phone's speaker was heard by the mic and sent as the farmer's words. The client now drops a transcript of 3+ words that is part of what it just said (a real "yes"/"haan" is never dropped) and waits 600 ms before listening hands-free. (4) "Details of the cows" got only "10 activities…". The list tools' text now names the newest 5 entries. Tests: 295. Live replay ×2 with Nova Lite: no "undefined", accurate read-backs, useful details. Evaluation 13/13. Smoke 19/19.
 - **Gap shown by the same session:** there is no herd register. Cow names can only go into activity notes, so Nova attaches them to whatever animals appear in earlier notes, and "how many cows" can't be answered. The read-back lets the farmer refuse a wrong guess, but the real fix is a small herd register (register/list animals).
 - Alexa+ stays optional: access is partner-restricted (see FRICTION.md).
+## Added from phone testing: farm records beyond money — done (2026-10-16/17)
+
+Asked for during phone testing ("add herds and name them, edit them, crops like paddy and ragi with seed and yield, milk, cow insurance with reminders").
+
+- **12 new MCP tools** on a generic farm-scoped record store (`src/repositories/record-store.ts`, with DynamoDB and in-memory implementations). It has typed ids, optimistic locking and the same retry-safe idempotency as the ledger, in the existing table, so there's no new AWS resource. Herd: `register_animal` (a list), `update_animal`, `list_animals`. Milk: `record_milk`, `get_milk_summary`. Crops: `record_sowing`, `record_harvest`, `list_crops`. Insurance and reminders: `add_insurance`, `add_reminder`, `complete_reminder`, `list_reminders`. Quantities are whole millilitres, grams and hundredths of an acre, so totals are exact. Lookups by name never guess: an unknown or ambiguous name lists the options. The daily summary includes milk.
+- **Web client:** a **Farm** tab (coming up, herd, 7-day milk by animal, crops with seed vs harvest), plus "milk today" and "coming up" on Today. The screens' read-only allowlist gains the four new read tools. `npm run start:chat -- --seed` loads a sample farm.
+- **`npm run farm-scenario`:** a 17-message conversation through the real agent with live Nova Lite in voice mode (herd, rename, milk morning and evening, diesel, paddy and ragi from sowing to harvest, comparison, insurance, reminder, sale, counts). It checks the stored records afterwards. It started at **2/9** and reached **27/27 over 3 runs** after these agent fixes:
+  - The read-back dialogue is no longer kept in the model's history (Nova copied "Shall I…?" and stopped calling tools). Confirmed changes are stored as plain tool calls with unique ids.
+  - Voice turns collect every change across model rounds, then give one read-back.
+  - A save claimed without any tool call gets one "call the tool" retry, and otherwise an honest "Nothing was saved".
+  - `clientRequestId`, `animalId` and `cropId` are hidden from the model and stripped from its requests (it copied ids from history).
+  - Placeholders and zero amounts are cleaned up ("N/A", "cover ₹0"); nested schema checks and enum case fixes run before any read-back; read-backs include every detail (premium vs cover, policy number, variety, birth date, mother).
+  - Quantities are never parsed as money; "other" expenses need a note; explicit dates win over a named period.
+- Checked on AWS: smoke 19/19. A live record-store check on the real table covered retries with no duplicates, versioned updates and crop-cycle closing. Evaluation against the deployed server: 22/26 (2 runs, 13 cases); the misses are model variance with nothing wrong saved.
+- Tests: 329 in 25 files.
+- **Demo data to clean before recording:** test entries on the demo farm (smoke-test expenses and vaccinations, evaluation entries dated January 2025 and today, a "Seetha" calf from the evaluation, and a "Smoke Test Cow" marked died).
+
 ## Step 6: Weekly insights on the chosen model — not started
 ## Step 7: Multimodal retrieval — not started
 ## Step 8: Crop and cattle image analysis — not started

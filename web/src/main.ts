@@ -1,13 +1,15 @@
 /** App shell: sign-in, header, bottom navigation and a tiny hash router (#/chat, #/today, ...). */
 import { ApiError, displayName, isLocalDevServer, isSignedIn, loadConfig, setNewPassword, setSignedOutHandler, signIn, signOut } from './api.js';
 import { clear, h, notice } from './dom.js';
+import { farmView } from './farm.js';
 import { activitiesView, chatView, expensesView, todayView } from './views.js';
 
 const ROUTES: Record<string, { title: string; icon: string; view: () => HTMLElement }> = {
   chat: { title: 'Chat', icon: '💬', view: chatView },
   today: { title: 'Today', icon: '📊', view: todayView },
   expenses: { title: 'Expenses', icon: '₹', view: expensesView },
-  activities: { title: 'Activities', icon: '🐄', view: activitiesView },
+  farm: { title: 'Farm', icon: '🐄', view: farmView },
+  activities: { title: 'Activities', icon: '📋', view: activitiesView },
 };
 
 const root = document.getElementById('app')!;

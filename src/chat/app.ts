@@ -39,7 +39,17 @@ export interface ChatAppDeps {
 }
 
 /** Read-only tools the screens may call directly. Writes only ever happen through the agent. */
-export const READ_TOOLS = new Set(['get_expense_summary', 'list_expenses', 'get_daily_summary', 'list_activities', 'weekly_insights']);
+export const READ_TOOLS = new Set([
+  'get_expense_summary',
+  'list_expenses',
+  'get_daily_summary',
+  'list_activities',
+  'weekly_insights',
+  'list_animals',
+  'get_milk_summary',
+  'list_crops',
+  'list_reminders',
+]);
 export const MAX_MESSAGE_LENGTH = 500;
 const MAX_BODY_BYTES = 16 * 1024;
 

@@ -43,7 +43,7 @@ interface ActivityView {
   note?: string;
 }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const errorText = (error: unknown) => (error instanceof ApiError ? error.message : 'Something went wrong. Please try again.');
 
 function select(name: string, options: Array<[string, string]>, value: string, onChange: (v: string) => void): HTMLSelectElement {
@@ -245,6 +245,8 @@ interface DailySummary {
   expenseCount: number;
   byCategory: Array<{ category: string; totalDisplay: string; entryCount: number }>;
   activities: ActivityView[];
+  milkTotalMillilitres: number;
+  milkTotalDisplay: string;
 }
 interface ExpenseSummary {
   totalDisplay: string;
@@ -257,11 +259,32 @@ interface WeeklyInsights {
   narrationSource: 'bedrock' | 'template';
 }
 
-function card(title: string, body: HTMLElement): HTMLElement {
+export interface ReminderItem {
+  source: 'reminder' | 'insurance';
+  title: string;
+  dueDate: string;
+  daysLeft: number;
+  overdue: boolean;
+}
+
+const dueLabel = (i: ReminderItem) => (i.overdue ? `${plural(-i.daysLeft, 'day', 'days')} overdue` : i.daysLeft === 0 ? 'today' : `in ${plural(i.daysLeft, 'day', 'days')}`);
+
+/** Reminders and insurance renewals due in the next `days` days (and anything overdue), soonest first. */
+export async function upcomingList(days: number): Promise<Node> {
+  const { data } = await readTool<{ items: ReminderItem[] }>('list_reminders', { daysAhead: days });
+  if (data.items.length === 0) return notice('empty', `Nothing due in the next ${plural(days, 'day', 'days')}.`);
+  return h(
+    'ul',
+    { class: 'breakdown' },
+    ...data.items.map((i) => h('li', { class: i.overdue ? 'overdue' : undefined }, h('span', {}, `${i.source === 'insurance' ? '🛡️ ' : '⏰ '}${i.title}`), h('strong', {}, dueLabel(i)))),
+  );
+}
+
+export function card(title: string, body: HTMLElement): HTMLElement {
   return h('article', { class: 'card' }, h('h3', {}, title), body);
 }
 
-async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
+export async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
   clear(body);
   body.appendChild(spinner());
   try {
@@ -274,12 +297,13 @@ async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
   }
 }
 
-const breakdown = (rows: Array<{ name: string; value: string; count: number }>) =>
+export const breakdown = (rows: Array<{ name: string; value: string; count: number }>) =>
   h('ul', { class: 'breakdown' }, ...rows.map((r) => h('li', {}, h('span', {}, `${label(r.name)} (${r.count})`), h('strong', {}, r.value))));
 
 export function todayView(): HTMLElement {
   const today = h('div');
   const month = h('div');
+  const upcoming = h('div');
   const week = h('div');
 
   const load = () => {
@@ -291,6 +315,7 @@ export function todayView(): HTMLElement {
         h('p', { class: 'big' }, data.expenseTotalDisplay),
         h('p', { class: 'muted' }, `${plural(data.expenseCount, 'expense', 'expenses')} · ${plural(data.activities.length, 'activity', 'activities')} · ${shortDate(data.date)}`),
         data.byCategory.length ? breakdown(data.byCategory.map((g) => ({ name: g.category, value: g.totalDisplay, count: g.entryCount }))) : null,
+        data.milkTotalMillilitres > 0 ? h('p', { class: 'milk-line' }, h('span', {}, 'Milk today'), h('strong', {}, data.milkTotalDisplay)) : null,
         data.activities.length
           ? h('ul', { class: 'plain' }, ...data.activities.map((a) => h('li', {}, `${label(a.activityType)}${a.animalOrField ? ` · ${a.animalOrField}` : ''}`)))
           : null,
@@ -306,6 +331,7 @@ export function todayView(): HTMLElement {
         data.groups.length ? breakdown(data.groups.map((g) => ({ name: g.key, value: g.totalDisplay, count: g.entryCount }))) : notice('empty', 'Nothing recorded this month yet.'),
       );
     });
+    void fillCard(upcoming, async () => upcomingList(7));
     void fillCard(week, async () => {
       const { data } = await readTool<WeeklyInsights>('weekly_insights');
       return h('div', {}, h('p', {}, data.narrative), h('p', { class: 'muted small' }, 'Every number above is checked against your saved records.'));
@@ -318,6 +344,7 @@ export function todayView(): HTMLElement {
     { class: 'view' },
     h('div', { class: 'view-head' }, h('h2', {}, 'Today'), h('button', { class: 'link', type: 'button', onclick: load }, 'Refresh')),
     card('Spent today', today),
+    card('Coming up', upcoming),
     card('This month', month),
     card('Last 7 days', week),
   );

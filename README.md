@@ -17,6 +17,11 @@ FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmer
 | `correct_entry` | Fixes an expense ("no, it was ₹900") and keeps an audit record of the old value. |
 | `get_daily_summary` | Everything recorded on one day: expense total, spending by category, all expenses and activities. |
 | `weekly_insights` | Plain-language explanation of the last 7 days, written by Amazon Bedrock from figures calculated in code. Every number is checked by the [verified-number guard](docs/number-guard.md). |
+| `list_activities` | Lists farm activities for a period, newest first. |
+| `register_animal` / `update_animal` / `list_animals` | Herd register: add animals (several in one call), rename, set breed, tag, mother or birth date, mark sold or died. Counts and ages are worked out by code. |
+| `record_milk` / `get_milk_summary` | Milk per animal or for the herd, morning or evening, stored as whole millilitres. Totals and the average per day come from code. |
+| `record_sowing` / `record_harvest` / `list_crops` | Crop cycles (paddy, ragi, sugarcane, ...): field, acres, seed, harvests in kg, quintal or tonne, yield per acre and harvest-to-seed ratio. |
+| `add_insurance` / `add_reminder` / `complete_reminder` / `list_reminders` | Animal insurance and reminders. Policy end dates show up as reminders 30 days ahead. |
 | `health_check` | Confirms the server is reachable. |
 
 All totals are added up by server code, and "today" or "this month" is worked out on the server in India time. The farm ID comes only from the bearer token. See [docs/data-model.md](docs/data-model.md).
