@@ -35,6 +35,9 @@ export function setSignedOutHandler(handler: (reason?: string) => void): void {
   onSignedOut = handler;
 }
 
+/** True on the local development server (dev sign-in, test data). Known once loadConfig() has resolved. */
+export const isLocalDevServer = () => config?.auth === 'dev';
+
 export async function loadConfig(): Promise<PublicConfig> {
   if (!config) {
     const res = await fetch('/api/config');

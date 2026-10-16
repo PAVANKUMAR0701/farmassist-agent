@@ -159,3 +159,7 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .confirm { display: flex; gap: 8px; margin-top: 10px; }
 .confirm button { flex: 1; }
 .bubble .spoken { font-size: 0.75rem; opacity: 0.8; margin-left: 6px; }
+
+/* Shown only by the local development server */
+.dev-banner { background: #fff3cd; color: #5c4400; padding: 8px 12px; font-size: 0.85rem; text-align: center; border-bottom: 1px solid #e6d28a; }
+@media (prefers-color-scheme: dark) { .dev-banner { background: #3a3110; color: #f3dd8f; border-color: #5c4d18; } }

@@ -1,5 +1,5 @@
 /** App shell: sign-in, header, bottom navigation and a tiny hash router (#/chat, #/today, ...). */
-import { ApiError, displayName, isSignedIn, loadConfig, setNewPassword, setSignedOutHandler, signIn, signOut } from './api.js';
+import { ApiError, displayName, isLocalDevServer, isSignedIn, loadConfig, setNewPassword, setSignedOutHandler, signIn, signOut } from './api.js';
 import { clear, h, notice } from './dom.js';
 import { activitiesView, chatView, expensesView, todayView } from './views.js';
 
@@ -82,7 +82,11 @@ function shell(): HTMLElement {
     ),
   );
   const offline = navigator.onLine ? null : notice('error', 'You are offline. Records will load when the connection is back.');
-  return h('div', { class: 'shell' }, header, h('main', { class: 'content' }, offline, ROUTES[route]!.view()), nav);
+  // The local server looks identical to the real app; make it impossible to mistake one for the other.
+  const devBanner = isLocalDevServer()
+    ? h('div', { class: 'dev-banner', role: 'note' }, 'Local test server: test data only (not your farm records). The AI assistant is on only if this server was started with AGENT_MODEL_ID.')
+    : null;
+  return h('div', { class: 'shell' }, header, devBanner, h('main', { class: 'content' }, offline, ROUTES[route]!.view()), nav);
 }
 
 function render(message?: string): void {
