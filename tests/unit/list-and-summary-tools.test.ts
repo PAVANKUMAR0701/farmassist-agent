@@ -146,3 +146,13 @@ describe('farm isolation', () => {
     expect(stolenCursor.isError).toBe(true);
   });
 });
+
+it('list_expenses names the newest entries in its text, with server-formatted amounts', async () => {
+  const { config } = makeTestConfig();
+  await callTool(config, 'record_expense', { amountRupees: 2500, category: 'feed', note: 'cattle feed', date: '2026-10-13' });
+  await callTool(config, 'record_expense', { amountRupees: 800, category: 'medicine', date: '2026-10-14' });
+  const r = await callTool(config, 'list_expenses', {});
+  expect(r.content[0]!.text.split('\n')[0]).toBe(
+    '2 expenses from 2026-10-01 to 2026-10-14. Newest: 2026-10-14 ₹800.00 on medicine; 2026-10-13 ₹2,500.00 on feed (cattle feed).',
+  );
+});

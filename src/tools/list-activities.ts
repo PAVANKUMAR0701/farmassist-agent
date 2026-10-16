@@ -21,6 +21,14 @@ const outputSchema = {
   totalCount: z.number().int().describe('How many activities match in the whole range (items may hold fewer).'),
 };
 
+/** The newest few, in words, so a reply (or a speaker) can say what was done: '2026-10-16 vaccination for brown cow'. */
+function newestLines(items: Array<{ date: string; activityType: string; animalOrField?: string | undefined; note?: string | undefined }>): string {
+  return items
+    .slice(0, 5)
+    .map((a) => `${a.date} ${a.activityType === 'other' && a.note ? `"${a.note}"` : a.activityType}${a.animalOrField ? ` for ${a.animalOrField}` : ''}`)
+    .join('; ');
+}
+
 export function registerListActivities(server: McpServer, deps: ToolDeps): void {
   server.registerTool(
     'list_activities',
@@ -61,7 +69,7 @@ export function registerListActivities(server: McpServer, deps: ToolDeps): void 
         const text =
           matching.length === 0
             ? `No ${args.activityType ? `${args.activityType} ` : ''}activities recorded from ${range.from} to ${range.to}.`
-            : `${matching.length} ${what} from ${range.from} to ${range.to}${shown}.`;
+            : `${matching.length} ${what} from ${range.from} to ${range.to}${shown}. Newest: ${newestLines(structured.items)}.`;
         return {
           content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }],
           structuredContent: structured,

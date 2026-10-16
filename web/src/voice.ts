@@ -99,6 +99,22 @@ export function listen(lang: string, onInterim: (text: string) => void): Listeni
   return { result, stop: () => recognition.stop() };
 }
 
+const words = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/(\d),(?=\d)/g, '$1') // "2,500" (spoken text) and "2500" (recogniser) are the same
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+
+/**
+ * True when the microphone most likely heard the app's own spoken reply. Needs 3+ words, because a real
+ * short answer ("yes", "haan") also appears inside the spoken question ("Say yes to save it").
+ */
+export function isEcho(heard: string, lastSpoken: string): boolean {
+  const h = words(heard);
+  return h.split(' ').length >= 3 && words(speakable(lastSpoken)).includes(h);
+}
+
 /** Rewrites a reply so it sounds natural: "₹2,500.00" -> "2,500 rupees", "2026-10-14" -> "14 October 2026". */
 export function speakable(text: string): string {
   return text

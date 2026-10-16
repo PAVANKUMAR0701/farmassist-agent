@@ -44,9 +44,10 @@ const when = (args: Record<string, unknown>) => (typeof args.date === 'string' ?
 export function describeAction(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case 'record_expense':
-      return `record ${rupees(args.amountRupees)} on ${String(args.category)}${when(args)}`;
+      return `record ${rupees(args.amountRupees)} on ${typeof args.category === 'string' ? args.category : 'an unknown category'}${when(args)}`;
     case 'record_farm_activity': {
-      const what = args.activityType === 'other' && typeof args.note === 'string' ? `"${args.note}"` : String(args.activityType);
+      const note = typeof args.note === 'string' ? `"${args.note}"` : undefined;
+      const what = (args.activityType === 'other' || typeof args.activityType !== 'string' ? note : undefined) ?? (typeof args.activityType === 'string' ? args.activityType : 'an activity');
       return `record ${what}${typeof args.animalOrField === 'string' ? ` for ${args.animalOrField}` : ''}${when(args)}`;
     }
     case 'correct_entry': {
@@ -72,7 +73,7 @@ export function confirmationPrompt(changes: readonly ProposedChange[]): string {
 
   const sameDayExpenses = changes.every((c) => c.name === 'record_expense' && c.args.date === changes[0]!.args.date);
   const body = sameDayExpenses
-    ? `record ${changes.length} expenses${when(changes[0]!.args)}: ${list(changes.map((c) => `${rupees(c.args.amountRupees)} on ${String(c.args.category)}`))}`
+    ? `record ${changes.length} expenses${when(changes[0]!.args)}: ${list(changes.map((c) => `${rupees(c.args.amountRupees)} on ${typeof c.args.category === 'string' ? c.args.category : 'an unknown category'}`))}`
     : list(changes.map((c) => describeAction(c.name, c.args)));
   return `Shall I ${body}? Say yes to save them, or no to cancel.`;
 }
@@ -80,7 +81,7 @@ export function confirmationPrompt(changes: readonly ProposedChange[]): string {
 // English, Hindi/Hinglish and Tamil (romanised and native script).
 const YES = new Set(['yes', 'yeah', 'yep', 'ya', 'ok', 'okay', 'sure', 'confirm', 'confirmed', 'correct', 'right', 'save', 'haan', 'han', 'ha', 'haa', 'ji', 'sari', 'seri', 'aama', 'aamaa', 'ama', 'हाँ', 'हां', 'हा', 'जी', 'ठीक', 'ஆமா', 'ஆம்', 'சரி']);
 const YES_PHRASES = ['go ahead', 'do it', 'theek hai', 'thik hai', 'save it', 'yes please'];
-const NO = new Set(['no', 'nope', 'cancel', 'stop', 'wrong', 'dont', "don't", 'nahi', 'nahin', 'na', 'mat', 'illa', 'illai', 'venda', 'vendam', 'नहीं', 'ना', 'मत', 'இல்லை', 'வேண்டாம்', 'வேணாம்']);
+const NO = new Set(['no', 'nope', 'not', 'nothing', 'never', 'wait', 'cancel', 'stop', 'wrong', 'dont', "don't", 'nahi', 'nahin', 'na', 'mat', 'illa', 'illai', 'venda', 'vendam', 'नहीं', 'ना', 'मत', 'இல்லை', 'வேண்டாம்', 'வேணாம்']);
 
 /**
  * Reads a reply to a confirmation question. Only short answers count: "no, it was 250" is a new

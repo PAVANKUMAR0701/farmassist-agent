@@ -21,7 +21,7 @@ describe('list_activities', () => {
 
     const vaccinations = await callTool(config, 'list_activities', { activityType: 'vaccination', limit: 1 });
     expect(vaccinations.structuredContent).toMatchObject({ totalCount: 2, items: [{ animalOrField: 'Lakshmi', date: '2026-10-14' }] });
-    expect(vaccinations.content[0]!.text).toContain('2 vaccination activities from 2026-10-01 to 2026-10-14 (showing the newest 1).');
+    expect(vaccinations.content[0]!.text).toContain('2 vaccination activities from 2026-10-01 to 2026-10-14 (showing the newest 1). Newest: 2026-10-14 vaccination for Lakshmi.');
   });
 
   it('rejects a limit above 100 and says clearly when nothing was recorded', async () => {

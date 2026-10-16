@@ -48,6 +48,10 @@ describe('confirmationAnswer', () => {
     ['no, it was 250 on feed', 'other'],
     ['yes but make it 250', 'other'],
     ["ok don't", 'other'],
+    // Live 2026-10-16: the phone's mic picked up the app's own "Okay, nothing was saved." - never a yes.
+    ['okay nothing was saved', 'other'],
+    ['ok not now', 'other'],
+    ['wait', 'no'],
     ['spent 500 on fuel', 'other'],
   ])('%j -> %s', (text, expected) => {
     expect(confirmationAnswer(text)).toBe(expected);
@@ -206,5 +210,29 @@ describe('corrections are checked before the farmer is asked (live phone test, 2
     const turn = await agent.handle('no, it was 900');
     expect(turn.toolCalls).toMatchObject([{ name: 'correct_entry', result: { isError: true, text: expect.stringContaining('did not come from a tool result') } }]);
     expect(turn.reply).toBe('Which expense should I change?');
+  });
+});
+
+describe('requests are checked against the tool schema before a read-back (live phone test, 2026-10-16)', () => {
+  it('a missing activityType is sent back to the model, never read out as "undefined"', async () => {
+    const requests: ModelRequest[] = [];
+    const script: ModelReply[] = [
+      use('record_farm_activity', { animalOrField: 'three cows', note: 'named Aisa, Sita and Geeta' }),
+      use('record_farm_activity', { activityType: 'other', animalOrField: 'three cows', note: 'named Aisa, Sita and Geeta' }),
+    ];
+    const model: AgentModel = { modelId: 'scripted', respond: async (r) => (requests.push(structuredClone(r)), script.shift()!) };
+    const { agent } = setup(model);
+
+    const ask = await agent.handle('I just wanted to name the three cows Aisa Sita Geeta', { confirmWrites: true });
+
+    const bounced = requests[1]!.messages.at(-1)!.content[0] as { text: string; isError: boolean };
+    expect(bounced).toMatchObject({ isError: true, text: expect.stringContaining('"activityType" is required') });
+    expect(ask.reply).toBe('Shall I record "named Aisa, Sita and Geeta" for three cows for today? Say yes to save it, or no to cancel.');
+    expect(ask.reply).not.toContain('undefined');
+  });
+
+  it('read-backs never print "undefined" even for incomplete arguments', () => {
+    expect(describeAction('record_farm_activity', { animalOrField: 'Lakshmi' })).toBe('record an activity for Lakshmi for today');
+    expect(describeAction('record_expense', { amountRupees: 100 })).toBe('record ₹100.00 on an unknown category for today');
   });
 });

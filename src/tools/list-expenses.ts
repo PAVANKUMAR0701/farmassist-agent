@@ -62,7 +62,10 @@ export function registerListExpenses(server: McpServer, deps: ToolDeps): void {
         const summary =
           structured.items.length === 0
             ? `No ${what} recorded from ${range.from} to ${range.to}.`
-            : `${structured.items.length} ${what} from ${range.from} to ${range.to}${page.nextCursor ? ' (more available)' : ''}.`;
+            : `${structured.items.length} ${what} from ${range.from} to ${range.to}${page.nextCursor ? ' (more available)' : ''}. Newest: ${structured.items
+                .slice(0, 5)
+                .map((e) => `${e.date} ${e.amountDisplay} on ${e.category}${e.note ? ` (${e.note})` : ''}`)
+                .join('; ')}.`;
         return {
           content: [{ type: 'text' as const, text: `${summary}\n${JSON.stringify(structured)}` }],
           structuredContent: structured,

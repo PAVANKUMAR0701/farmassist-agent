@@ -5,6 +5,7 @@
 import { ApiError, readTool, sendChat, type ChatReply } from './api.js';
 import { append, clear, h, label, notice, shortDate, spinner } from './dom.js';
 import {
+  isEcho,
   listen,
   loadVoicePrefs,
   saveVoicePrefs,
@@ -66,6 +67,8 @@ export function chatView(): HTMLElement {
   const mic = h('button', { type: 'button', class: 'mic', 'aria-label': 'Speak', title: 'Speak' }, '🎤');
   let listening: Listening | undefined;
   let openConfirmation: HTMLElement | undefined;
+  /** What the app last said aloud, to recognise its own voice coming back through the microphone. */
+  let lastSpoken = '';
   let conversationId: string | undefined;
   try {
     conversationId = sessionStorage.getItem(CONVERSATION_KEY) ?? undefined;
@@ -100,7 +103,9 @@ export function chatView(): HTMLElement {
     bubble('bot', h('p', {}, reply.reply), actions, buttons, mode);
 
     if (spoken && prefs.speakReplies) {
-      void speak(reply.reply, prefs.lang).then(() => {
+      lastSpoken = reply.reply;
+      void speak(reply.reply, prefs.lang).then(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 600)); // let the speaker fall silent before the mic opens
         // Hands-free: after reading a confirmation question aloud, listen for the yes or no.
         if (reply.awaitingConfirmation && voiceInput && !listening) startListening();
       });
@@ -151,7 +156,14 @@ export function chatView(): HTMLElement {
     session.result
       .then((heard) => {
         // The words heard are shown in the chat; a spoken change is still read back before anything is saved.
-        if (heard) void submit(heard, true);
+        if (!heard) return;
+        if (isEcho(heard, lastSpoken)) {
+          // The phone's speaker came back through the mic (heard live, 2026-10-16). Never send that as the farmer's words.
+          input.value = '';
+          bubble('bot', notice('info', 'That sounded like my own voice. Please tap 🎤 and speak again, or type.'));
+          return;
+        }
+        void submit(heard, true);
       })
       .catch((error: unknown) => {
         input.value = '';

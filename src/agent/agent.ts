@@ -107,8 +107,33 @@ function knownEntryIds(messages: readonly ChatMessage[], lastExpenseId: string |
   return ids;
 }
 
+/**
+ * The checks of the tool's own published JSON Schema that matter before a read-back: required fields,
+ * allowed values and basic types. The server still validates everything; this only stops the farmer from
+ * being asked to confirm a request that cannot work (e.g. "record undefined for Lakshmi").
+ */
+export function schemaProblems(schema: Record<string, unknown>, args: Record<string, unknown>): string[] {
+  const properties = (schema.properties ?? {}) as Record<string, { type?: string; enum?: unknown[] }>;
+  const problems = ((schema.required ?? []) as string[]).filter((field) => args[field] === undefined || args[field] === null).map((field) => `"${field}" is required`);
+  for (const [field, value] of Object.entries(args)) {
+    const spec = properties[field];
+    if (!spec || value === undefined) continue;
+    if (spec.enum && !spec.enum.includes(value)) problems.push(`"${field}" must be one of ${spec.enum.map((v) => JSON.stringify(v)).join(', ')}`);
+    else if ((spec.type === 'number' || spec.type === 'integer') && typeof value !== 'number') problems.push(`"${field}" must be a number`);
+    else if (spec.type === 'string' && typeof value !== 'string') problems.push(`"${field}" must be text`);
+  }
+  return problems;
+}
+
 /** Why the agent will not send this call, or undefined. Only corrections are checked: they name existing entries. */
-export function preflightError(name: string, args: Record<string, unknown>, known: ReadonlySet<string>): string | undefined {
+export function preflightError(
+  name: string,
+  args: Record<string, unknown>,
+  known: ReadonlySet<string>,
+  schema?: Record<string, unknown>,
+): string | undefined {
+  const invalid = schema ? schemaProblems(schema, args) : [];
+  if (invalid.length > 0) return `invalid arguments (${invalid.join('; ')}). Fix them and call ${name} again`;
   if (name !== 'correct_entry' || args.entryId === undefined) return undefined; // `match` lookups are checked by the server
   const id = String(args.entryId);
   if (id.startsWith('act_')) return 'saved activities cannot be edited. To add details, record a new activity with them in the note';
@@ -232,7 +257,12 @@ export class FarmAgent {
         // with guidance, so the model can recover now instead of asking the farmer to confirm a doomed change.
         // Ids from before this response only: the model's own tool request must not vouch for its id.
         const known = knownEntryIds(messages.slice(0, -1), this.lastExpenseId);
-        const refused = new Map(uses.map((u) => [u.id, preflightError(u.name, u.input, known)] as const).filter((r): r is [string, string] => r[1] !== undefined));
+        const schemaOf = (name: string) => tools.find((t) => t.name === name)?.inputSchema;
+        const refused = new Map(
+          uses
+            .map((u) => [u.id, preflightError(u.name, u.input, known, CHANGING_TOOLS.has(u.name) ? schemaOf(u.name) : undefined)] as const)
+            .filter((r): r is [string, string] => r[1] !== undefined),
+        );
         if (refused.size > 0) {
           const results: ChatBlock[] = uses.map((u) => {
             const error = refused.get(u.id) ?? 'not run, because another request in this step was refused; send it again if it is still needed';
