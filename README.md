@@ -62,6 +62,8 @@ A mobile-first web app (`web/`, plain TypeScript, no framework, about 13 KiB) wi
 - **Screens show only server-calculated amounts.** They call read-only MCP tools through `/api/read`. Writes go only through the agent.
 - **Without a model** (or when Bedrock fails) the chat works in "basic mode" through the deterministic parser.
 
+**Voice.** Tap 🎤 and speak in English (India), Hindi or Tamil. This uses the browser's built-in Web Speech API, with no extra service: speech input works in Chrome (Android and desktop), Edge and Safari, and elsewhere the mic is hidden and typing works. Replies are read aloud ("₹2,500.00" is spoken as "2,500 rupees"). Because speech can be misheard, **a spoken change is never saved straight away.** The app reads back exactly what it will save ("Shall I record ₹2,500.00 on feed for today?"), then listens for "yes"/"haan"/"aama" or a tap on **Yes, save**. The read-back is built by code from the exact tool arguments, not written by the model. If the microphone is blocked, missing or hears nothing, the app says so and typing still works.
+
 Run it locally (local dev sign-in, in-memory data, bound to 127.0.0.1 only):
 
 ```bash

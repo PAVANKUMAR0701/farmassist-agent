@@ -4,6 +4,18 @@
  */
 import { ApiError, readTool, sendChat, type ChatReply } from './api.js';
 import { append, clear, h, label, notice, shortDate, spinner } from './dom.js';
+import {
+  listen,
+  loadVoicePrefs,
+  saveVoicePrefs,
+  speak,
+  speechInputSupported,
+  speechOutputSupported,
+  stopSpeaking,
+  VOICE_LANGUAGES,
+  VoiceError,
+  type Listening,
+} from './voice.js';
 
 const CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'other'];
 const ACTIVITY_TYPES = ['milking', 'vaccination', 'sowing', 'harvesting', 'irrigation', 'other'];
@@ -47,6 +59,13 @@ export function chatView(): HTMLElement {
   const log = h('div', { class: 'chat-log', 'aria-live': 'polite' });
   const input = h('input', { type: 'text', placeholder: 'Type what you spent or did…', maxlength: '500', 'aria-label': 'Message', autocomplete: 'off' });
   const send = h('button', { type: 'submit', class: 'primary' }, 'Send');
+  const prefs = loadVoicePrefs();
+  let voiceInput = speechInputSupported();
+  const idlePlaceholder = voiceInput ? 'Type or tap the mic…' : 'Type what you spent or did…';
+  input.placeholder = idlePlaceholder;
+  const mic = h('button', { type: 'button', class: 'mic', 'aria-label': 'Speak', title: 'Speak' }, '🎤');
+  let listening: Listening | undefined;
+  let openConfirmation: HTMLElement | undefined;
   let conversationId: string | undefined;
   try {
     conversationId = sessionStorage.getItem(CONVERSATION_KEY) ?? undefined;
@@ -61,25 +80,46 @@ export function chatView(): HTMLElement {
     return el;
   };
 
-  const showReply = (reply: ChatReply) => {
+  const showReply = (reply: ChatReply, spoken: boolean) => {
     // What the server did, in its own words; skipped when the reply already is that text (basic mode).
     const extra = reply.actions.filter((a) => a.text !== reply.reply);
     const actions = extra.length
       ? h('ul', { class: 'actions' }, ...extra.map((a) => h('li', { class: a.ok ? 'ok' : 'failed' }, `${a.ok ? '✓' : '✗'} ${a.text}`)))
       : null;
     const mode = reply.mode === 'fallback' ? h('div', { class: 'mode' }, reply.modelUnavailable ? 'Basic mode: the AI assistant is unavailable right now.' : 'Basic mode') : null;
-    bubble('bot', h('p', {}, reply.reply), actions, mode);
+    let buttons: HTMLElement | null = null;
+    if (reply.awaitingConfirmation) {
+      const answer = (text: string) => void submit(text, true);
+      buttons = openConfirmation = h(
+        'div',
+        { class: 'confirm' },
+        h('button', { type: 'button', class: 'primary', onclick: () => answer('yes') }, 'Yes, save'),
+        h('button', { type: 'button', class: 'secondary', onclick: () => answer('no') }, 'No'),
+      );
+    }
+    bubble('bot', h('p', {}, reply.reply), actions, buttons, mode);
+
+    if (spoken && prefs.speakReplies) {
+      void speak(reply.reply, prefs.lang).then(() => {
+        // Hands-free: after reading a confirmation question aloud, listen for the yes or no.
+        if (reply.awaitingConfirmation && voiceInput && !listening) startListening();
+      });
+    }
   };
 
-  async function submit(text: string) {
+  async function submit(text: string, spoken = false) {
     const message = text.trim();
     if (!message) return;
+    // Any next message answers (or drops) the pending confirmation, so its buttons stop working.
+    openConfirmation?.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    openConfirmation = undefined;
+    stopSpeaking();
     input.value = '';
-    bubble('me', h('p', {}, message));
+    bubble('me', h('p', {}, message), spoken ? h('span', { class: 'spoken', title: 'Spoken' }, '🎤') : null);
     const pending = bubble('bot', h('p', { class: 'typing' }, 'Thinking…'));
     send.disabled = true;
     try {
-      const reply = await sendChat(message, conversationId);
+      const reply = await sendChat(message, conversationId, spoken);
       conversationId = reply.conversationId;
       try {
         sessionStorage.setItem(CONVERSATION_KEY, conversationId);
@@ -87,17 +127,52 @@ export function chatView(): HTMLElement {
         /* the conversation just won't survive a reload */
       }
       pending.remove();
-      showReply(reply);
+      showReply(reply, spoken);
     } catch (error) {
       pending.remove();
-      bubble('bot', notice('error', errorText(error), () => void submit(message)));
+      bubble('bot', notice('error', errorText(error), () => void submit(message, spoken)));
     } finally {
       send.disabled = false;
-      input.focus();
     }
   }
 
+  function setListening(on: boolean) {
+    mic.classList.toggle('listening', on);
+    mic.setAttribute('aria-label', on ? 'Stop listening' : 'Speak');
+    mic.textContent = on ? '■' : '🎤';
+    input.placeholder = on ? 'Listening… speak now' : idlePlaceholder;
+  }
+
+  function startListening() {
+    stopSpeaking();
+    const session = listen(prefs.lang, (heard) => (input.value = heard));
+    listening = session;
+    setListening(true);
+    session.result
+      .then((heard) => {
+        // The words heard are shown in the chat; a spoken change is still read back before anything is saved.
+        if (heard) void submit(heard, true);
+      })
+      .catch((error: unknown) => {
+        input.value = '';
+        const voiceError = error instanceof VoiceError ? error : new VoiceError('Voice input stopped. Please try again, or type instead.');
+        bubble('bot', notice('error', voiceError.message));
+        if (voiceError.permanent) {
+          voiceInput = false;
+          mic.remove();
+          form.classList.add('no-mic');
+        }
+      })
+      .finally(() => {
+        listening = undefined;
+        setListening(false);
+      });
+  }
+
+  mic.addEventListener('click', () => (listening ? listening.stop() : startListening()));
+
   const newChat = () => {
+    stopSpeaking();
     conversationId = undefined;
     try {
       sessionStorage.removeItem(CONVERSATION_KEY);
@@ -111,13 +186,43 @@ export function chatView(): HTMLElement {
   const greet = () =>
     bubble(
       'bot',
-      h('p', {}, 'Namaste! Tell me what you spent or did on the farm, or ask about your records.'),
+      h('p', {}, voiceInput ? 'Namaste! Tap 🎤 and tell me what you spent or did on the farm, or type it.' : 'Namaste! Tell me what you spent or did on the farm, or ask about your records.'),
       h('div', { class: 'chips' }, ...SUGGESTIONS.map((s) => h('button', { class: 'chip', type: 'button', onclick: () => void submit(s) }, s))),
     );
-  greet();
 
-  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, input, send);
-  return h('section', { class: 'view chat' }, h('div', { class: 'view-head' }, h('h2', {}, 'Chat'), h('button', { class: 'link', type: 'button', onclick: newChat }, 'New chat')), log, form);
+  const voiceSettings =
+    voiceInput || speechOutputSupported()
+      ? h(
+          'div',
+          { class: 'voice-settings' },
+          select('Voice language', VOICE_LANGUAGES, prefs.lang, (v) => ((prefs.lang = v), saveVoicePrefs(prefs))),
+          h(
+            'label',
+            { class: 'toggle' },
+            h('input', {
+              type: 'checkbox',
+              checked: prefs.speakReplies,
+              onchange: (e: Event) => {
+                prefs.speakReplies = (e.target as HTMLInputElement).checked;
+                saveVoicePrefs(prefs);
+                if (!prefs.speakReplies) stopSpeaking();
+              },
+            }),
+            'Read replies aloud',
+          ),
+        )
+      : null;
+
+  const form = h('form', { class: voiceInput ? 'composer' : 'composer no-mic', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, voiceInput ? mic : null, input, send);
+  greet();
+  return h(
+    'section',
+    { class: 'view chat' },
+    h('div', { class: 'view-head' }, h('h2', {}, 'Chat'), h('button', { class: 'link', type: 'button', onclick: newChat }, 'New chat')),
+    voiceSettings,
+    log,
+    form,
+  );
 }
 
 // ---------------------------------------------------------------- Today (dashboard)

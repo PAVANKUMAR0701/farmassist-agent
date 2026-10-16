@@ -8,6 +8,7 @@
  */
 import { ulid } from 'ulid';
 import { todayInFarmTimeZone } from '../shared/time.js';
+import { confirmationAnswer, confirmationPrompt, type PendingAction } from './confirm.js';
 import { decideFallback, FALLBACK_HELP } from './fallback.js';
 import type { FarmToolClient, ToolCallResult } from './mcp-client.js';
 import type { AgentModel, ChatBlock, ChatMessage } from './model.js';
@@ -68,12 +69,23 @@ export interface AgentTurn {
   unverifiedNumbers?: string[];
   /** 'replaced' when the model claimed a change that the server refused. */
   claimCheck?: 'replaced';
+  /** Set when a write is waiting for the farmer's yes (voice turns); `reply` is the read-back question. */
+  confirmation?: { prompt: string };
+  /** The farmer answered a confirmation question. */
+  confirmed?: boolean;
+}
+
+export interface HandleOptions {
+  /** Hold every ledger change until the farmer confirms it (used for spoken messages). */
+  confirmWrites?: boolean;
 }
 
 /** Everything the agent remembers between messages; stored by the hosted chat backend between requests. */
 export interface AgentState {
   history: ChatMessage[];
   lastExpenseId?: string | undefined;
+  /** A write waiting for confirmation; only the very next message can confirm it. */
+  pending?: PendingAction | undefined;
 }
 
 export interface FarmAgentOptions {
@@ -117,6 +129,7 @@ export class FarmAgent {
   private readonly maxToolRounds: number;
   private history: ChatMessage[] = [];
   private lastExpenseId: string | undefined;
+  private pending: PendingAction | undefined;
 
   constructor(options: FarmAgentOptions) {
     this.tools = options.tools;
@@ -125,30 +138,48 @@ export class FarmAgent {
     this.maxToolRounds = options.maxToolRounds ?? 4;
     this.history = options.state?.history ?? [];
     this.lastExpenseId = options.state?.lastExpenseId;
+    this.pending = options.state?.pending;
   }
 
   exportState(): AgentState {
-    return { history: this.history, ...(this.lastExpenseId ? { lastExpenseId: this.lastExpenseId } : {}) };
+    return {
+      history: this.history,
+      ...(this.lastExpenseId ? { lastExpenseId: this.lastExpenseId } : {}),
+      ...(this.pending ? { pending: this.pending } : {}),
+    };
   }
 
   get modelId(): string | undefined {
     return this.model?.modelId;
   }
 
-  async handle(message: string): Promise<AgentTurn> {
+  async handle(message: string, options: HandleOptions = {}): Promise<AgentTurn> {
+    // A pending write lives for exactly one message: it is confirmed, cancelled, or dropped.
+    const pending = this.pending;
+    this.pending = undefined;
+    if (pending) {
+      const answer = confirmationAnswer(message);
+      if (answer !== 'other') {
+        const turn = answer === 'yes' ? await this.runConfirmed(pending) : { reply: 'Okay, nothing was saved.', mode: pending.mode, toolCalls: [], confirmed: false };
+        this.rememberAsText(message, turn);
+        return turn;
+      }
+    }
+
+    const confirmWrites = options.confirmWrites === true;
     if (!this.model) {
-      const turn = await this.handleWithFallback(message);
+      const turn = await this.handleWithFallback(message, confirmWrites);
       this.rememberAsText(message, turn);
       return turn;
     }
-    const { turn, transcript } = await this.handleWithModel(message, this.model);
+    const { turn, transcript } = await this.handleWithModel(message, this.model, confirmWrites);
     if (transcript) this.remember(transcript);
     else this.rememberAsText(message, turn);
     return turn;
   }
 
   /** Returns the turn and, when the model finished normally, the full transcript (tool blocks included) to keep. */
-  private async handleWithModel(message: string, model: AgentModel): Promise<{ turn: AgentTurn; transcript?: ChatMessage[] }> {
+  private async handleWithModel(message: string, model: AgentModel, confirmWrites: boolean): Promise<{ turn: AgentTurn; transcript?: ChatMessage[] }> {
     const toolCalls: AgentToolCall[] = [];
     const messages: ChatMessage[] = [...this.history, { role: 'user', content: [{ type: 'text', text: message }] }];
     try {
@@ -170,6 +201,8 @@ export class FarmAgent {
           messages[messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: turn.reply }] };
           return { turn, transcript: messages };
         }
+        const change = confirmWrites ? uses.find((u) => CHANGING_TOOLS.has(u.name)) : undefined;
+        if (change) return { turn: { ...this.hold(change.name, change.input, 'model'), toolCalls } };
         const results: ChatBlock[] = [];
         for (const use of uses) {
           const call = await this.runTool(use.name, use.input);
@@ -184,15 +217,30 @@ export class FarmAgent {
       console.error(JSON.stringify({ level: 'error', message: 'Agent model turn failed', modelId: model.modelId, error: error instanceof Error ? error.name : 'Unknown' }));
       // Something may already have been written this turn: report it rather than risk doing it twice.
       if (toolCalls.length > 0) return { turn: { reply: this.summariseToolCalls(toolCalls), mode: 'model', toolCalls, modelError } };
-      return { turn: { ...(await this.handleWithFallback(message)), modelError } };
+      return { turn: { ...(await this.handleWithFallback(message, confirmWrites)), modelError } };
     }
   }
 
-  private async handleWithFallback(message: string): Promise<AgentTurn> {
+  private async handleWithFallback(message: string, confirmWrites = false): Promise<AgentTurn> {
     const decision = decideFallback(message, { lastExpenseId: this.lastExpenseId }, todayInFarmTimeZone(this.now()));
     if (decision.kind === 'reply') return { reply: decision.text, mode: 'fallback', toolCalls: [] };
+    if (confirmWrites && CHANGING_TOOLS.has(decision.name)) return this.hold(decision.name, decision.args, 'fallback');
     const call = await this.runTool(decision.name, decision.args);
     return { reply: serverText(call.result), mode: 'fallback', toolCalls: [call] };
+  }
+
+  /** Holds a write until the farmer confirms it. The id is fixed now, so a retried "yes" cannot record twice. */
+  private hold(name: string, input: Record<string, unknown>, mode: 'model' | 'fallback'): AgentTurn {
+    const args = WRITE_TOOLS.has(name) && !input.clientRequestId ? { ...input, clientRequestId: `agent-${ulid()}` } : { ...input };
+    const prompt = confirmationPrompt(name, args);
+    this.pending = { name, args, prompt, mode };
+    return { reply: prompt, mode, toolCalls: [], confirmation: { prompt } };
+  }
+
+  private async runConfirmed(pending: PendingAction): Promise<AgentTurn> {
+    const call = await this.runTool(pending.name, pending.args);
+    const text = serverText(call.result);
+    return { reply: call.result.isError ? `Nothing was saved. ${sentence(text)}` : text, mode: pending.mode, toolCalls: [call], confirmed: true };
   }
 
   /** Calls one tool, adding a clientRequestId to writes and retrying once (same id) if the request itself fails. */

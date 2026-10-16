@@ -202,11 +202,15 @@ export interface ChatReply {
   mode: 'model' | 'fallback';
   modelId?: string;
   modelUnavailable?: boolean;
+  /** A spoken change is waiting: `reply` is the read-back question, to be answered "yes" or "no". */
+  awaitingConfirmation?: boolean;
+  confirmed?: boolean;
   actions: Array<{ tool: string; ok: boolean; text: string }>;
 }
 
-export function sendChat(message: string, conversationId?: string): Promise<ChatReply> {
-  return post<ChatReply>('/api/chat', { message, ...(conversationId ? { conversationId } : {}) });
+/** `voice: true` marks a spoken message: the backend then reads changes back and waits for a yes. */
+export function sendChat(message: string, conversationId?: string, voice = false): Promise<ChatReply> {
+  return post<ChatReply>('/api/chat', { message, ...(conversationId ? { conversationId } : {}), ...(voice ? { voice: true } : {}) });
 }
 
 /** Calls a read-only MCP tool. `data` is the tool's structured result, exactly as the server computed it. */

@@ -175,3 +175,16 @@ describe('DynamoConversationStore', () => {
     expect(await store.load(key)).toBeUndefined();
   });
 });
+
+describe('voice turns over the API', () => {
+  it('holds a spoken write until "yes" arrives in the same conversation', async () => {
+    const { deps, expensesToday } = setup();
+    const ask = await (await post(deps, '/api/chat', { message: 'spent 2500 on feed', voice: true })).json();
+    expect(ask).toMatchObject({ awaitingConfirmation: true, reply: expect.stringContaining('Shall I record ₹2,500.00 on feed for today?') });
+    expect(await expensesToday()).toHaveLength(0);
+
+    const done = await (await post(deps, '/api/chat', { message: 'yes', voice: true, conversationId: ask.conversationId })).json();
+    expect(done).toMatchObject({ confirmed: true, reply: 'Recorded ₹2,500.00 on feed for 2026-10-14.' });
+    expect(await expensesToday()).toHaveLength(1);
+  });
+});

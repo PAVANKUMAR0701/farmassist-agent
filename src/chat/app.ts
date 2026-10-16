@@ -2,7 +2,8 @@
  * Hosted chat backend for the web client. One origin serves:
  *   GET  /, /app.js, /styles.css   the web client (static files bundled into the function)
  *   GET  /api/config               public sign-in settings (Cognito region and app client id)
- *   POST /api/chat                 one agent turn: { message, conversationId? }
+ *   POST /api/chat                 one agent turn: { message, conversationId?, voice? }
+ *                                  (voice: true holds ledger changes until the farmer says yes)
  *   POST /api/read                 one read-only MCP tool call for screens: { tool, args }
  *
  * Every /api/chat and /api/read call needs a valid sign-in token. The backend then talks to the MCP server
@@ -129,7 +130,7 @@ async function chat(body: Record<string, unknown>, user: ChatUser, tools: FarmTo
   const key = { farmId: user.farmId, userId: user.userId, conversationId };
   const state = requested ? await deps.conversations.load(key) : undefined;
   const agent = new FarmAgent({ tools, model: deps.model, state, ...(deps.now ? { now: deps.now } : {}) });
-  const turn = await agent.handle(message);
+  const turn = await agent.handle(message, { confirmWrites: body.voice === true });
   await deps.conversations.save(key, agent.exportState());
 
   return json(200, {
@@ -139,6 +140,9 @@ async function chat(body: Record<string, unknown>, user: ChatUser, tools: FarmTo
     ...(turn.mode === 'model' && deps.model ? { modelId: deps.model.modelId } : {}),
     ...(turn.modelError ? { modelUnavailable: true } : {}),
     ...(turn.numberCheck ? { numberCheck: turn.numberCheck } : {}),
+    // A write is waiting: the reply is the read-back question; answer "yes" or "no" in the same conversation.
+    ...(turn.confirmation ? { awaitingConfirmation: true } : {}),
+    ...(turn.confirmed !== undefined ? { confirmed: turn.confirmed } : {}),
     // What the server did, in its own words, so the screen can show it next to the reply.
     actions: turn.toolCalls.map((c) => ({ tool: c.name, ok: !c.result.isError, text: c.result.text.split('\n')[0] })),
   });
