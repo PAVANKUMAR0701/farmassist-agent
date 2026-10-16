@@ -29,7 +29,7 @@ Teardown: `sam delete --stack-name farmassist-dev --region ap-south-1`, then del
 - Checks: typecheck clean, 192 tests in 16 files pass, Lambda bundle builds, live smoke test 19/19, live hardening checks pass 3 runs in a row.
 - Data model unchanged. No migration.
 
-## Step 3: MCP client/agent and model adapter (Nova Lite first) — done, except a live model call (2026-10-16)
+## Step 3: MCP client/agent and model adapter (Nova Lite first) — done (2026-10-16)
 
 - `src/agent/mcp-client.ts`: official MCP SDK client over Streamable HTTP with the bearer token. Handles tool discovery (schemas as published by the server), tool calls, and results normalised to text plus structured data.
 - `src/agent/model.ts`: provider-neutral `AgentModel` interface, with a Bedrock Converse implementation. The model is chosen by `AGENT_MODEL_ID` only. `src/services/bedrock-client.ts` now picks the Bedrock account the same way for the agent and `weekly_insights` (own role, cross-account role, or local profile).
@@ -39,7 +39,8 @@ Teardown: `sam delete --stack-name farmassist-dev --region ap-south-1`, then del
 - Tests: 31 new (223 in total, 19 files). The agent tests use the real SDK client against the real server in-process, so they cover the client/server contract and the ledger state, not a fake.
 - End to end against the deployed stack, no model: recorded ₹2,500 of feed, corrected it to ₹900, recorded a vaccination and summarised the day. DynamoDB shows the expense at version 2 with a `CORR#` audit item (250000 → 90000 paise, the farmer's words as the reason) and the `ACT#` item.
 - End to end with `AGENT_MODEL_ID=apac.amazon.nova-lite-v1:0` through the Bedrock account: the real `AccessDeniedException` was caught, and the fallback answered correctly.
-- **Not done:** a successful live model call, and the Nova Lite vs Nova Micro quality comparison. Both are blocked on access (see [bedrock-access.md](bedrock-access.md)). Re-run `npm run agent` with `AGENT_MODEL_ID` set once the admin adds the policy.
+- Live models: the Bedrock account's admin added the Nova policy, and Nova Lite and Nova Micro both answer. `npm run agent-eval` (11 cases × 3 runs against the deployed backend): **Nova Lite 32/33, median 1.5 s per turn; Nova Micro 8/33** (markdown in replies, wrong week). **Nova Lite is the agent model.** Eight agent issues found by the evaluation were fixed. See [model-evaluation.md](model-evaluation.md).
+- Live end to end with Nova Lite: "paid 1750 to the labourer on 2025-01-23", then "no, it was 1500". DynamoDB shows the labour expense at 150000 paise, version 2, with a `CORR#` audit item of 175000 → 150000.
 
 Model access check, 2026-10-16, personal account, ap-south-1: the `apac.amazon.nova-lite-v1:0` and `apac.amazon.nova-micro-v1:0` inference profiles are listed, but the first `converse` call to each fails with `ThrottlingException: Too many tokens per day`. Service Quotas shows every Nova Lite, Nova Micro and Nova 2 Lite quota at 0, and the per-day token quotas are marked not adjustable. Raising them needs an AWS Support case. The Bedrock account (231427841372) is blocked too, see bedrock-access.md.
 

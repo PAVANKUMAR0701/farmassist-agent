@@ -4,7 +4,7 @@
 
 FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmers in India. It is a **self-hosted MCP server** (Model Context Protocol, spec 2025-11-25, Streamable HTTP) for AWS Lambda and DynamoDB, with Amazon Bedrock planned for insights.
 
-**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The backend is **deployed to AWS** (stack `farmassist-dev`, ap-south-1) and passes the full smoke test against the live endpoint ([recorded result](docs/protocol-tests.md#recorded-result-deployed-to-aws-2026-10-16)). It runs without any LLM: Bedrock is not switched on yet, so `weekly_insights` uses its template text. **No real Bedrock call has been tested yet.** The MCP client/agent works against the deployed backend (deterministic mode). The web client is still to come. Progress is tracked in [docs/progress.md](docs/progress.md).
+**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The backend is **deployed to AWS** (stack `farmassist-dev`, ap-south-1) and passes the full smoke test against the live endpoint ([recorded result](docs/protocol-tests.md#recorded-result-deployed-to-aws-2026-10-16)). It runs without any LLM: Bedrock is not switched on yet, so `weekly_insights` uses its template text. **No real Bedrock call has been tested yet.** The MCP client/agent works against the deployed backend, with Amazon Nova Lite or without any model. The web client is still to come. Progress is tracked in [docs/progress.md](docs/progress.md).
 
 ## Tools
 
@@ -51,7 +51,7 @@ See [docs/protocol-tests.md](docs/protocol-tests.md) for what the smoke test che
 FARMASSIST_MCP_URL=https://<id>.lambda-url.ap-south-1.on.aws/mcp npm run agent -- "spent 2500 on feed" "no, it was 900"
 ```
 
-Model access is not working yet in either AWS account. See [docs/bedrock-access.md](docs/bedrock-access.md).
+**Amazon Nova Lite** is the chosen model (32 of 33 evaluation turns correct, median 1.5 s; Nova Micro scored 8/33). See [docs/model-evaluation.md](docs/model-evaluation.md) and, for account setup, [docs/bedrock-access.md](docs/bedrock-access.md).
 
 ## Deploy to AWS
 

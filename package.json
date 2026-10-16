@@ -14,6 +14,7 @@
     "smoke": "tsx scripts/protocol-smoke.ts",
     "live-hardening": "tsx scripts/live-hardening.ts",
     "agent": "tsx scripts/agent-cli.ts",
+    "agent-eval": "tsx scripts/agent-eval.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

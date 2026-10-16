@@ -8,14 +8,14 @@ FarmAssist works without any model. Bedrock adds natural-language chat (the agen
 |---|---|---|
 | Personal, 381492152939 (deploys the stack) | Nova Lite, Nova Micro, Nova 2 Lite | `ThrottlingException: Too many tokens per day`. Every Nova quota is 0, and the per-day quotas can't be raised through self-service. |
 | Personal | Claude Haiku 4.5 | Cross-region quotas are 0 (checked 2026-10-15). |
-| Bedrock account, 231427841372 (IAM user `Pavan_BedRock_MCP`) | Nova Lite, Nova Micro, Nova 2 Lite | `AccessDeniedException`: the user's policy doesn't allow these models. |
+| Bedrock account, 231427841372 (IAM user `Pavan_BedRock_MCP`) | Nova Lite, Nova Micro | **Works** (since the policy below was added, 2026-10-16). Evaluated in [model-evaluation.md](model-evaluation.md). |
 | Bedrock account | Claude Haiku 4.5 | `AccessDeniedException`: the account's one-time AWS Marketplace subscription isn't done ([FRICTION #5](../FRICTION.md)). |
 
-**No live model invocation has succeeded yet.** Everything model-related is tested against mocked Bedrock responses. The agent falls back to its deterministic parser on any model error. That fallback was seen working against the deployed backend with the real `AccessDeniedException`.
+**Nova Lite and Nova Micro work through the Bedrock account.** Nova Lite drives the agent. The agent still falls back to its deterministic parser on any model error, which was also seen working against the deployed backend with a real `AccessDeniedException`.
 
-## Request for the Bedrock account admin (231427841372)
+## Policy on the Bedrock account (231427841372), added 2026-10-16
 
-Nova is Amazon's own model, so it doesn't need the Marketplace subscription that blocks Haiku. It only needs IAM permission. Add this inline policy to the IAM user `Pavan_BedRock_MCP`:
+Nova is Amazon's own model, so it doesn't need the Marketplace subscription that blocks Haiku. It only needed IAM permission. This statement was added to the IAM user `Pavan_BedRock_MCP`, next to its existing Haiku statement:
 
 ```json
 {

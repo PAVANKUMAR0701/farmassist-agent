@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FarmAgent, numbersIn } from '../../src/agent/agent.js';
+import { cleanModelText, FarmAgent, numbersIn } from '../../src/agent/agent.js';
 import { FarmMcpClient } from '../../src/agent/mcp-client.js';
 import type { AgentModel, ChatBlock, ModelReply, ModelRequest } from '../../src/agent/model.js';
 import { handleMcpRequest } from '../../src/mcp/http.js';
@@ -149,4 +149,48 @@ describe('agent with a model', () => {
 
 it('numbersIn normalises money, grouping and percentages', () => {
   expect(numbersIn('₹1,25,000.50 and 74% on 2026-10-14')).toEqual(['125000.5', '74', '2026', '10', '14']);
+});
+
+it('cleanModelText removes reasoning blocks and internal id annotations', () => {
+  expect(cleanModelText('<thinking>The server is fine.</thinking> Recorded ₹2,500.00. [entryId: act_1]')).toBe('Recorded ₹2,500.00.');
+  expect(cleanModelText('Done. <thinking>unclosed')).toBe('Done.');
+});
+
+it('does not offer operator-only tools to the model', async () => {
+  const model = new ScriptedModel([say('Hello! How can I help?')]);
+  const { agent } = setup(model);
+  await agent.handle('hi');
+  expect(model.requests[0]!.tools.map((t) => t.name)).not.toContain('health_check');
+});
+
+it("tells the model today's date in India time, so it never has to guess the year", async () => {
+  const model = new ScriptedModel([say('Hello!')]);
+  const { agent } = setup(model);
+  await agent.handle('hi');
+  expect(model.requests[0]!.system).toContain('Today is 2026-10-14 (India time)');
+});
+
+it('keeps the previous turn\'s tool use and server result in the history the model sees', async () => {
+  const model = new ScriptedModel([use('record_expense', { amountRupees: 800, category: 'medicine' }), say('Saved ₹800.00 for medicine.'), say('OK.')]);
+  const { agent } = setup(model);
+  await agent.handle('paid 800 for medicine');
+  await agent.handle('thanks');
+  const history = model.requests[2]!.messages;
+  expect(history.map((m) => [m.role, m.content[0]!.type])).toEqual([
+    ['user', 'text'],
+    ['assistant', 'tool_use'],
+    ['user', 'tool_result'],
+    ['assistant', 'text'],
+    ['user', 'text'],
+  ]);
+  expect((history[2]!.content[0] as Extract<ChatBlock, { type: 'tool_result' }>).text).toMatch(/"entryId":"exp_20261014_/);
+});
+
+it('lets the parser answer when a tool-free model reply fails the number check', async () => {
+  const model = new ScriptedModel([say('Was the ₹700 for: 1. feed 2. fodder 3. medicine?')]);
+  const { agent, expensesToday } = setup(model);
+  const turn = await agent.handle('I spent 700');
+  expect(turn).toMatchObject({ mode: 'fallback', numberCheck: 'replaced', unverifiedNumbers: ['1', '2', '3'] });
+  expect(turn.reply).toContain('What was the ₹700 for?');
+  expect(await expensesToday()).toHaveLength(0);
 });
