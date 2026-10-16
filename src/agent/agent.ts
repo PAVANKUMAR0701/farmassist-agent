@@ -174,6 +174,14 @@ export function numbersIn(text: string): string[] {
   return [...text.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => String(Number(m[0].replaceAll(',', ''))));
 }
 
+/** Only numbers that state an amount or quantity: "₹2,500", "74%", "12 litres", "3 quintal", "2 acres". */
+export function quantityNumbersIn(text: string): string[] {
+  const n = String.raw`\d[\d,]*(?:\.\d+)?`;
+  const units = String.raw`rupees?|rs\b|inr|paise|%|percent|kgs?|kilos?|kilograms?|grams?|g\b|litres?|liters?|ltrs?|l\b|ml\b|quintals?|qtls?|tonnes?|tons?|acres?|hectares?|bags?`;
+  const pattern = new RegExp(String.raw`(?:₹|\brs\.?|\binr)\s*(${n})|(${n})\s*(?:${units})`, 'gi');
+  return [...text.matchAll(pattern)].map((m) => String(Number((m[1] ?? m[2])!.replaceAll(',', ''))));
+}
+
 export class FarmAgent {
   private readonly tools: FarmToolClient;
   private readonly model: AgentModel | undefined;
@@ -356,8 +364,13 @@ export class FarmAgent {
       console.warn(JSON.stringify({ level: 'warn', message: 'Model reply replaced: claimed success after a failed write' }));
       return { reply: `Nothing was saved. ${sentence(serverText(failed[0]!.result))}`, mode: 'model', toolCalls, claimCheck: 'replaced' };
     }
+    // With tool results this turn, every number must come from them (or the farmer). Without any, the reply
+    // can only be a question or a remark: only amounts and quantities are checked, against the whole
+    // conversation, so ordinary numbers ("these 3 cows", list numbering) no longer throw the reply away.
     const allowed = new Set([...numbersIn(message), ...toolCalls.flatMap((c) => numbersIn(c.result.text))]);
-    const unverified = numbersIn(text).filter((n) => !allowed.has(n));
+    if (toolCalls.length === 0) for (const n of numbersIn(JSON.stringify(this.history))) allowed.add(n);
+    const checked = toolCalls.length === 0 ? quantityNumbersIn(text) : numbersIn(text);
+    const unverified = checked.filter((n) => !allowed.has(n));
     if (text && unverified.length === 0) return { reply: text, mode: 'model', toolCalls, numberCheck: 'passed' };
     console.warn(JSON.stringify({ level: 'warn', message: 'Model reply replaced', unverifiedNumbers: unverified.length, empty: !text }));
     if (toolCalls.length === 0) return { ...(await this.handleWithFallback(message)), numberCheck: 'replaced', unverifiedNumbers: unverified };

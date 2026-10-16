@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claimsSuccess, cleanModelText, FarmAgent, numbersIn } from '../../src/agent/agent.js';
+import { claimsSuccess, cleanModelText, FarmAgent, numbersIn, quantityNumbersIn } from '../../src/agent/agent.js';
 import { FarmMcpClient } from '../../src/agent/mcp-client.js';
 import type { AgentModel, ChatBlock, ModelReply, ModelRequest } from '../../src/agent/model.js';
 import { handleMcpRequest } from '../../src/mcp/http.js';
@@ -187,10 +187,10 @@ it('keeps the previous turn\'s tool use and server result in the history the mod
 });
 
 it('lets the parser answer when a tool-free model reply fails the number check', async () => {
-  const model = new ScriptedModel([say('Was the ₹700 for: 1. feed 2. fodder 3. medicine?')]);
+  const model = new ScriptedModel([say('Was the ₹7,000 for feed?')]); // misheard amount: the farmer said 700
   const { agent, expensesToday } = setup(model);
   const turn = await agent.handle('I spent 700');
-  expect(turn).toMatchObject({ mode: 'fallback', numberCheck: 'replaced', unverifiedNumbers: ['1', '2', '3'] });
+  expect(turn).toMatchObject({ mode: 'fallback', numberCheck: 'replaced', unverifiedNumbers: ['7000'] });
   expect(turn.reply).toContain('What was the ₹700 for?');
   expect(await expensesToday()).toHaveLength(0);
 });
@@ -241,5 +241,26 @@ describe('never claims a change the server refused', () => {
     ['Which expense do you want to correct?', false],
   ])('claimsSuccess(%j) is %s', (text, expected) => {
     expect(claimsSuccess(text)).toBe(expected);
+  });
+});
+
+describe('number check in turns without tool calls (live phone test, 2026-10-16)', () => {
+  it('keeps a clarifying question that numbers its options', async () => {
+    const model = new ScriptedModel([say('Do you want to 1. add 3 new cows or 2. rename existing ones?')]);
+    const { agent } = setup(model);
+    const turn = await agent.handle('I just want to add three more and name them Sita Gita Rita');
+    expect(turn).toMatchObject({ mode: 'model', numberCheck: 'passed', reply: 'Do you want to 1. add 3 new cows or 2. rename existing ones?' });
+  });
+
+  it('still blocks an invented amount when no tool ran', async () => {
+    const model = new ScriptedModel([say('You usually spend about ₹4,000 on feed.')]);
+    const { agent } = setup(model);
+    const turn = await agent.handle('what do I usually spend on feed');
+    expect(turn.numberCheck).toBe('replaced');
+    expect(turn.reply).not.toContain('4,000');
+  });
+
+  it('quantityNumbersIn finds only amounts and quantities', () => {
+    expect(quantityNumbersIn('1. Lakshmi gave 12.5 litres, 2. ₹2,500 for 3 bags, 74% done, 3 cows')).toEqual(['12.5', '2500', '3', '74']);
   });
 });
