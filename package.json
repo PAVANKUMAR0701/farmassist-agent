@@ -24,7 +24,9 @@
     "pretest": "npm run build:web --silent",
     "start:chat": "tsx scripts/local-chat-server.ts",
     "farm-scenario": "tsx scripts/farm-scenario.ts",
-    "narration-eval": "tsx scripts/narration-eval.ts"
+    "narration-eval": "tsx scripts/narration-eval.ts",
+    "retrieval-eval": "tsx scripts/retrieval-eval.ts",
+    "build-knowledge-index": "tsx scripts/build-knowledge-index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1151.0",
