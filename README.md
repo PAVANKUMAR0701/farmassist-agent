@@ -4,7 +4,7 @@
 
 FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmers in India. It is a **self-hosted MCP server** (Model Context Protocol, spec 2025-11-25, Streamable HTTP) for AWS Lambda and DynamoDB, with Amazon Bedrock planned for insights.
 
-**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The AWS SAM template and Lambda handler are written and checked (template lint, bundle build, handler tests). **Nothing has been deployed yet, and no real Bedrock call has been tested yet.** The web client is still to come.
+**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The backend is **deployed to AWS** (stack `farmassist-dev`, ap-south-1) and passes the full smoke test against the live endpoint ([recorded result](docs/protocol-tests.md#recorded-result-deployed-to-aws-2026-10-16)). It runs without any LLM: Bedrock is not switched on yet, so `weekly_insights` uses its template text. **No real Bedrock call has been tested yet.** The web client is still to come. Progress is tracked in [docs/progress.md](docs/progress.md).
 
 ## Tools
 
@@ -63,6 +63,14 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
    ```
 
    Accept the defaults or set `AllowedOrigins` to your web client's origin. `samconfig.toml` is git-ignored.
+
+   If `sam build` fails with "Cannot find esbuild", put the project's own esbuild on the PATH for that shell first. In PowerShell: `$env:PATH = "$PWD\node_modules\.bin;$env:PATH"`.
+
+   Non-interactive equivalent of the guided deploy:
+
+   ```bash
+   sam deploy --stack-name farmassist-dev --region ap-south-1 --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+   ```
 
 3. Run the smoke test against the `McpEndpoint` output:
 

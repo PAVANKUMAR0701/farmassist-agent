@@ -115,4 +115,25 @@ PASS  tools/call get_daily_summary (today) includes the corrected ₹900 and the
 
 `tests/lambda/handler.test.ts` runs the Lambda entry point (`src/lambda/handler.ts`) with Function URL events, mocking SSM and DynamoDB. It checks `initialize`, `tools/list`, base64 bodies, 202 for notifications, 401/403/405/404, and that a failed token load returns 500 and is retried on the next request.
 
-The deployed AWS endpoint has not been tested yet. Once deployed, run `npm run smoke -- <McpEndpoint>` and record the result here.
+## Recorded result: deployed to AWS, 2026-10-16
+
+Stack `farmassist-dev`, account 381492152939, ap-south-1. Real Lambda Function URL, DynamoDB table and SSM SecureString token. Bedrock is not configured, so `weekly_insights` used its template narration.
+
+```
+npm run smoke -- https://<function-url-id>.lambda-url.ap-south-1.on.aws/mcp
+PASS  initialize  (HTTP 200, expected 200)
+PASS  tools/call record_expense again (same clientRequestId) -> duplicate  (HTTP 200, expected 200)
+PASS  tools/call correct_entry ₹800 -> ₹900 (before/after)  (HTTP 200, expected 200)
+PASS  tools/call get_daily_summary (today) includes the corrected ₹900 and the vaccination  (HTTP 200, expected 200)
+PASS  tools/call weekly_insights returns verified facts and a guarded narrative  (HTTP 200, expected 200)
+PASS  missing bearer token -> 401  (HTTP 401, expected 401)
+...
+19/19 checks passed
+```
+
+Also checked by hand after the smoke run:
+- DynamoDB holds the two expenses, the activity, the `IDEM#` idempotency record and one `CORR#` audit item with `before.amountPaise` 80000 and `after.amountPaise` 90000. The corrected expense is at `version` 2.
+- A wrong (not missing) bearer token returns 401, and a path other than `/mcp` returns 404.
+- The function role has only `GetItem`/`PutItem`/`UpdateItem`/`Query` on the table, `ssm:GetParameter` on the one token parameter, and `AWSLambdaBasicExecutionRole`.
+- Table: on-demand, SSE on, point-in-time recovery on, TTL on `expiresAt`.
+- CloudWatch has one JSON line per request (method, path, status, latency) and no request bodies.

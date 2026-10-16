@@ -46,3 +46,12 @@ Severity: **low** (annoying), **medium** (cost real time), **high** (forced a de
 - **Severity:** low
 - **Workaround:** Ignored the warning for now; upgrade to the latest Node 22.x.
 - **Suggestion:** Print the required Node version in the Inspector README quick start.
+
+### 5. Bedrock: first call succeeds, then every call fails on a hidden AWS Marketplace subscription
+- **When:** 2026-10-15 approx. 18:55–19:05
+- **Task:** Use Claude Haiku 4.5 (`in.anthropic.claude-haiku-4-5-20251001-v1:0`, ap-south-1) from a second AWS account through an IAM user limited to `bedrock:InvokeModel` on that inference profile and model.
+- **Expected:** If the first Converse call works, later calls with the same credentials work too.
+- **Actual:** The first CLI `converse` call returned `"OK"` (458 ms). Every call after that, from both the CLI and the SDK, failed with `AccessDeniedException: ... not authorized to perform the required AWS Marketplace actions (aws-marketplace:ViewSubscriptions, aws-marketplace:Subscribe) to enable access to this model`. The first invocation apparently triggers an account-level Marketplace subscription, which a least-privilege Bedrock user isn't allowed to complete. The successful first reply hid the problem.
+- **Severity:** medium
+- **Workaround:** Someone with Marketplace permissions enables the model once for the account (or sends one message in the Bedrock console playground). The least-privilege runtime user stays as it is. Our `weekly_insights` fell back to the guarded template narration, so nothing broke for the user.
+- **Suggestion:** Fail the *first* call with the Marketplace error instead of letting it succeed, and list the one-time subscription step next to the IAM examples in the Bedrock model-access docs.
