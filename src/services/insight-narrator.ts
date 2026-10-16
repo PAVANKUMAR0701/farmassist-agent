@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
-import { fromIni, fromTemporaryCredentials } from '@aws-sdk/credential-providers';
 import type { WeeklyFacts } from '../domain/weekly-facts.js';
+import { createBedrockClientFromEnv } from './bedrock-client.js';
 
 /** Turns verified weekly facts into a short explanation. The output is always checked by the number guard. */
 export interface InsightNarrator {
@@ -50,21 +50,10 @@ export class BedrockInsightNarrator implements InsightNarrator {
  * (weekly_insights then uses its template narration).
  *
  *   BEDROCK_MODEL_ID     model or inference profile id; required to enable Bedrock
- *   BEDROCK_REGION       defaults to AWS_REGION, then ap-south-1
- *   BEDROCK_ROLE_ARN     optional: assume this role first (Bedrock in another AWS account)
- *   BEDROCK_AWS_PROFILE  optional, local development only: use this named profile for Bedrock calls
+ *   plus the account settings read by createBedrockClientFromEnv (region, role, profile)
  */
 export function createNarratorFromEnv(env: NodeJS.ProcessEnv = process.env): InsightNarrator | undefined {
   const modelId = env.BEDROCK_MODEL_ID;
   if (!modelId) return undefined;
-  const region = env.BEDROCK_REGION || env.AWS_REGION || 'ap-south-1';
-  const credentials = env.BEDROCK_ROLE_ARN
-    ? fromTemporaryCredentials({
-        params: { RoleArn: env.BEDROCK_ROLE_ARN, RoleSessionName: 'farmassist-insights', DurationSeconds: 900 },
-        clientConfig: { region },
-      })
-    : env.BEDROCK_AWS_PROFILE
-      ? fromIni({ profile: env.BEDROCK_AWS_PROFILE })
-      : undefined;
-  return new BedrockInsightNarrator(new BedrockRuntimeClient({ region, ...(credentials ? { credentials } : {}) }), modelId);
+  return new BedrockInsightNarrator(createBedrockClientFromEnv(env, 'farmassist-insights'), modelId);
 }

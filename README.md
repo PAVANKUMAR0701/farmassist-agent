@@ -4,7 +4,7 @@
 
 FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmers in India. It is a **self-hosted MCP server** (Model Context Protocol, spec 2025-11-25, Streamable HTTP) for AWS Lambda and DynamoDB, with Amazon Bedrock planned for insights.
 
-**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The backend is **deployed to AWS** (stack `farmassist-dev`, ap-south-1) and passes the full smoke test against the live endpoint ([recorded result](docs/protocol-tests.md#recorded-result-deployed-to-aws-2026-10-16)). It runs without any LLM: Bedrock is not switched on yet, so `weekly_insights` uses its template text. **No real Bedrock call has been tested yet.** The web client is still to come. Progress is tracked in [docs/progress.md](docs/progress.md).
+**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The backend is **deployed to AWS** (stack `farmassist-dev`, ap-south-1) and passes the full smoke test against the live endpoint ([recorded result](docs/protocol-tests.md#recorded-result-deployed-to-aws-2026-10-16)). It runs without any LLM: Bedrock is not switched on yet, so `weekly_insights` uses its template text. **No real Bedrock call has been tested yet.** The MCP client/agent works against the deployed backend (deterministic mode). The web client is still to come. Progress is tracked in [docs/progress.md](docs/progress.md).
 
 ## Tools
 
@@ -39,6 +39,19 @@ npm run smoke -- http://127.0.0.1:3000/mcp
 ```
 
 See [docs/protocol-tests.md](docs/protocol-tests.md) for what the smoke test checks and recorded results.
+
+## Talk to it through the agent
+
+`src/agent/` is the MCP client side. It connects to the server with the official MCP SDK client, discovers the tools, and turns a farmer's message into tool calls:
+
+- **With a model** (`AGENT_MODEL_ID`, any Bedrock model that supports tool use through the Converse API, such as Amazon Nova Lite): the usual tool-use loop. The agent adds a `clientRequestId` to every write, so retries never double-record. A reply that contains a number not found in the tool results is replaced with the server's own text.
+- **Without a model, or when the model fails:** a deterministic parser handles the core commands ("spent 2500 on feed", "no, it was 900", "vaccinated the brown cow", "how much on feed this month", "today's summary", "weekly insights"). It asks a question instead of guessing.
+
+```bash
+FARMASSIST_MCP_URL=https://<id>.lambda-url.ap-south-1.on.aws/mcp npm run agent -- "spent 2500 on feed" "no, it was 900"
+```
+
+Model access is not working yet in either AWS account. See [docs/bedrock-access.md](docs/bedrock-access.md).
 
 ## Deploy to AWS
 

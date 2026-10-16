@@ -29,9 +29,20 @@ Teardown: `sam delete --stack-name farmassist-dev --region ap-south-1`, then del
 - Checks: typecheck clean, 192 tests in 16 files pass, Lambda bundle builds, live smoke test 19/19, live hardening checks pass 3 runs in a row.
 - Data model unchanged. No migration.
 
-## Step 3: MCP client/agent and model adapter (Nova Lite first) — not started
+## Step 3: MCP client/agent and model adapter (Nova Lite first) — done, except a live model call (2026-10-16)
 
-Model access check, 2026-10-16, personal account, ap-south-1: the `apac.amazon.nova-lite-v1:0` and `apac.amazon.nova-micro-v1:0` inference profiles are listed, but the first `converse` call to each fails with `ThrottlingException: Too many tokens per day`. Service Quotas shows every Nova Lite, Nova Micro and Nova 2 Lite quota at 0, and the per-day token quotas are marked not adjustable. Raising them needs an AWS Support case. Until then, build the adapter against mocked responses and a deterministic fallback.
+- `src/agent/mcp-client.ts`: official MCP SDK client over Streamable HTTP with the bearer token. Handles tool discovery (schemas as published by the server), tool calls, and results normalised to text plus structured data.
+- `src/agent/model.ts`: provider-neutral `AgentModel` interface, with a Bedrock Converse implementation. The model is chosen by `AGENT_MODEL_ID` only. `src/services/bedrock-client.ts` now picks the Bedrock account the same way for the agent and `weekly_insights` (own role, cross-account role, or local profile).
+- `src/agent/agent.ts`: conversation state, tool loop with a 4-round limit, a `clientRequestId` added to every write, one retry (same id) on transport errors, and a number check on model replies (an unverified number means the reply is replaced with server text). If the model fails it falls back to the parser, but only if nothing was written that turn, so a write is never repeated.
+- `src/agent/fallback.ts`: deterministic parser for expenses, activities, corrections of the last expense, spending questions, daily summaries, lists and weekly insights. It asks a question when the amount or category is missing.
+- `npm run agent`: CLI for one conversation against any endpoint.
+- Tests: 31 new (223 in total, 19 files). The agent tests use the real SDK client against the real server in-process, so they cover the client/server contract and the ledger state, not a fake.
+- End to end against the deployed stack, no model: recorded ₹2,500 of feed, corrected it to ₹900, recorded a vaccination and summarised the day. DynamoDB shows the expense at version 2 with a `CORR#` audit item (250000 → 90000 paise, the farmer's words as the reason) and the `ACT#` item.
+- End to end with `AGENT_MODEL_ID=apac.amazon.nova-lite-v1:0` through the Bedrock account: the real `AccessDeniedException` was caught, and the fallback answered correctly.
+- **Not done:** a successful live model call, and the Nova Lite vs Nova Micro quality comparison. Both are blocked on access (see [bedrock-access.md](bedrock-access.md)). Re-run `npm run agent` with `AGENT_MODEL_ID` set once the admin adds the policy.
+
+Model access check, 2026-10-16, personal account, ap-south-1: the `apac.amazon.nova-lite-v1:0` and `apac.amazon.nova-micro-v1:0` inference profiles are listed, but the first `converse` call to each fails with `ThrottlingException: Too many tokens per day`. Service Quotas shows every Nova Lite, Nova Micro and Nova 2 Lite quota at 0, and the per-day token quotas are marked not adjustable. Raising them needs an AWS Support case. The Bedrock account (231427841372) is blocked too, see bedrock-access.md.
+
 ## Step 4: Web client — not started
 ## Step 5: Voice — not started
 ## Step 6: Weekly insights on the chosen model — not started
