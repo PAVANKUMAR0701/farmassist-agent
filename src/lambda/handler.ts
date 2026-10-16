@@ -9,6 +9,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { LambdaFunctionURLEvent } from 'aws-lambda';
 import { handleMcpRequest, type McpHttpConfig } from '../mcp/http.js';
 import { DynamoLedgerRepository } from '../repositories/dynamodb-ledger-repository.js';
+import { DynamoRecordStore } from '../repositories/dynamodb-record-store.js';
 import { createNarratorFromEnv } from '../services/insight-narrator.js';
 import { toLambdaResult, toWebRequest, type FunctionUrlResult } from './function-url.js';
 
@@ -39,6 +40,7 @@ async function loadConfig(): Promise<McpHttpConfig> {
     apiTokens: [{ token, farmId: requiredEnv('FARMASSIST_DEMO_FARM_ID'), clientId: 'demo-client' }],
     deps: {
       ledger: new DynamoLedgerRepository(client, requiredEnv('FARMASSIST_TABLE_NAME')),
+      records: new DynamoRecordStore(client, requiredEnv('FARMASSIST_TABLE_NAME')),
       now: () => new Date(),
       narrator: createNarratorFromEnv(),
     },

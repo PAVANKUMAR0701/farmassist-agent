@@ -1,13 +1,17 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
+import { registerAnimalTools } from '../tools/animals.js';
 import { registerCorrectEntry } from '../tools/correct-entry.js';
+import { registerCropTools } from '../tools/crops.js';
 import { registerGetDailySummary } from '../tools/get-daily-summary.js';
 import { registerGetExpenseSummary } from '../tools/get-expense-summary.js';
 import { registerListActivities } from '../tools/list-activities.js';
 import { registerListExpenses } from '../tools/list-expenses.js';
+import { registerMilkTools } from '../tools/milk.js';
 import { registerRecordExpense } from '../tools/record-expense.js';
 import { registerRecordFarmActivity } from '../tools/record-farm-activity.js';
+import { registerReminderTools } from '../tools/reminders.js';
 import type { ToolDeps } from '../tools/shared.js';
 import { registerWeeklyInsights } from '../tools/weekly-insights.js';
 
@@ -26,7 +30,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       instructions:
-        'FarmAssist records farm expenses and activities for a small Indian farm. ' +
+        'FarmAssist keeps the records of a small Indian farm: expenses, activities, the herd, milk, crops, insurance and reminders. ' +
         'All money totals are calculated by the server; never compute or invent totals yourself.',
     },
   );
@@ -66,6 +70,10 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   registerGetDailySummary(server, deps);
   registerListActivities(server, deps);
   registerWeeklyInsights(server, deps);
+  registerAnimalTools(server, deps);
+  registerMilkTools(server, deps);
+  registerCropTools(server, deps);
+  registerReminderTools(server, deps);
 
   return server;
 }

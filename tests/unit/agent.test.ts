@@ -40,7 +40,29 @@ describe('MCP client', () => {
     const { tools } = setup();
     const list = await tools.listTools();
     expect(list.map((t) => t.name).sort()).toEqual(
-      ['correct_entry', 'get_daily_summary', 'get_expense_summary', 'health_check', 'list_activities', 'list_expenses', 'record_expense', 'record_farm_activity', 'weekly_insights'].sort(),
+      [
+        'add_insurance',
+        'add_reminder',
+        'complete_reminder',
+        'correct_entry',
+        'get_daily_summary',
+        'get_expense_summary',
+        'get_milk_summary',
+        'health_check',
+        'list_activities',
+        'list_animals',
+        'list_crops',
+        'list_expenses',
+        'list_reminders',
+        'record_expense',
+        'record_farm_activity',
+        'record_harvest',
+        'record_milk',
+        'record_sowing',
+        'register_animal',
+        'update_animal',
+        'weekly_insights',
+      ].sort(),
     );
     const record = list.find((t) => t.name === 'record_expense')!;
     expect(record.inputSchema).toMatchObject({ type: 'object', required: expect.arrayContaining(['amountRupees', 'category']) });

@@ -1,5 +1,6 @@
 import { handleMcpRequest, type McpHttpConfig } from '../../src/mcp/http.js';
 import { InMemoryLedgerRepository } from '../../src/repositories/memory-ledger-repository.js';
+import { InMemoryRecordStore } from '../../src/repositories/record-store.js';
 
 export const ENDPOINT = 'http://127.0.0.1:3000/mcp';
 export const ALLOWED_ORIGIN = 'http://localhost:5173';
@@ -15,12 +16,13 @@ export const MCP_HEADERS = {
 /** Builds a test config with an in-memory ledger and a fixed clock (default: 2026-10-14 12:00 IST). */
 export function makeTestConfig(now: Date = new Date('2026-10-14T06:30:00Z')) {
   const ledger = new InMemoryLedgerRepository(() => now);
+  const records = new InMemoryRecordStore(() => now);
   const config: McpHttpConfig = {
     allowedOrigins: [ALLOWED_ORIGIN],
     apiTokens: [{ token: TEST_TOKEN, farmId: TEST_FARM_ID, clientId: 'test' }],
-    deps: { ledger, now: () => now },
+    deps: { ledger, records, now: () => now },
   };
-  return { config, ledger };
+  return { config, ledger, records };
 }
 
 export function postJson(config: McpHttpConfig, body: unknown, headers: Record<string, string> = {}): Promise<Response> {

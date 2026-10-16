@@ -17,6 +17,7 @@ import { InMemoryConversationStore } from '../src/chat/conversations.js';
 import { WEB_ASSETS } from '../src/chat/web-assets.generated.js';
 import { handleMcpRequest } from '../src/mcp/http.js';
 import { InMemoryLedgerRepository } from '../src/repositories/memory-ledger-repository.js';
+import { InMemoryRecordStore } from '../src/repositories/record-store.js';
 import { createNarratorFromEnv } from '../src/services/insight-narrator.js';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
@@ -33,7 +34,7 @@ const ledger = new InMemoryLedgerRepository();
 const localMcp = {
   allowedOrigins: [] as string[],
   apiTokens: [{ token: mcpToken, farmId, clientId: 'local-chat' }],
-  deps: { ledger, now: () => new Date(), narrator: createNarratorFromEnv() },
+  deps: { ledger, records: new InMemoryRecordStore(), now: () => new Date(), narrator: createNarratorFromEnv() },
 };
 const tools = new FarmMcpClient({
   url: remoteMcpUrl ?? 'http://in-process/mcp',

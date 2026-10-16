@@ -13,6 +13,8 @@ import { handleMcpRequest, type McpHttpConfig } from '../src/mcp/http.js';
 import { DynamoLedgerRepository } from '../src/repositories/dynamodb-ledger-repository.js';
 import type { LedgerRepository } from '../src/repositories/ledger-repository.js';
 import { InMemoryLedgerRepository } from '../src/repositories/memory-ledger-repository.js';
+import { DynamoRecordStore } from '../src/repositories/dynamodb-record-store.js';
+import { InMemoryRecordStore, type RecordStore } from '../src/repositories/record-store.js';
 import { createNarratorFromEnv } from '../src/services/insight-narrator.js';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
@@ -33,11 +35,14 @@ const farmId = process.env.FARMASSIST_DEMO_FARM_ID ?? 'demo-farm';
 
 const tableName = process.env.FARMASSIST_TABLE_NAME;
 let ledger: LedgerRepository;
+let records: RecordStore;
 if (tableName) {
   const client = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
   ledger = new DynamoLedgerRepository(client, tableName);
+  records = new DynamoRecordStore(client, tableName);
 } else {
   ledger = new InMemoryLedgerRepository();
+  records = new InMemoryRecordStore();
 }
 
 const narrator = createNarratorFromEnv();
@@ -45,7 +50,7 @@ const narrator = createNarratorFromEnv();
 const config: McpHttpConfig = {
   allowedOrigins,
   apiTokens: [{ token, farmId, clientId: 'local-dev' }],
-  deps: { ledger, now: () => new Date(), narrator },
+  deps: { ledger, records, now: () => new Date(), narrator },
 };
 
 const httpServer = createServer(async (req, res) => {

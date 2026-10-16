@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { EXPENSE_CATEGORIES, type ExpenseEntry } from '../domain/expense.js';
 import type { LedgerRepository } from '../repositories/ledger-repository.js';
+import type { RecordStore } from '../repositories/record-store.js';
 import type { InsightNarrator } from '../services/insight-narrator.js';
 import { formatPaise } from '../shared/money.js';
 import { daysBetween, isValidIsoDate, NAMED_PERIODS, resolveNamedPeriod, type DateRange, type NamedPeriod } from '../shared/time.js';
@@ -9,6 +10,8 @@ import { ToolUserError } from './tool-errors.js';
 
 export interface ToolDeps {
   ledger: LedgerRepository;
+  /** Animals, milk, crops, harvests, insurance and reminders. */
+  records: RecordStore;
   now: () => Date;
   /** Bedrock narration for weekly_insights. Without it the tool uses template narration. */
   narrator?: InsightNarrator | undefined;
