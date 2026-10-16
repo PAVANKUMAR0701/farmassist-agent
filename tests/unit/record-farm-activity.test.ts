@@ -74,5 +74,6 @@ describe('record_farm_activity tool', () => {
     const { config } = makeTestConfig();
     const r = await callTool(config, 'record_farm_activity', { activityType: 'other', note: 'repaired the cattle shed roof' });
     expect(r.isError).toBeFalsy();
+    expect(r.content[0]!.text).toMatch(/^Recorded "repaired the cattle shed roof" on 2026-10-14\./);
   });
 });

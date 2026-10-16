@@ -30,6 +30,14 @@ function rupees(value: unknown): string {
   }
 }
 
+/** "the expense from 2026-10-16" (date taken from the entry id) or "the feed expense from today" (match lookup). */
+function whichExpense(args: Record<string, unknown>): string {
+  const fromId = typeof args.entryId === 'string' ? /^exp_(\d{4})(\d{2})(\d{2})_/.exec(args.entryId) : null;
+  if (fromId) return `the expense from ${fromId[1]}-${fromId[2]}-${fromId[3]}`;
+  const match = (args.match ?? {}) as { date?: unknown; category?: unknown };
+  return `the ${typeof match.category === 'string' ? `${match.category} ` : ''}expense from ${typeof match.date === 'string' ? match.date : 'today'}`;
+}
+
 const when = (args: Record<string, unknown>) => (typeof args.date === 'string' ? ` for ${args.date}` : ' for today');
 
 /** "record ₹2,500.00 on feed for today", "record vaccination for brown cow for 2026-10-14", ... */
@@ -47,7 +55,7 @@ export function describeAction(name: string, args: Record<string, unknown>): str
         typeof args.newCategory === 'string' ? `the category to ${args.newCategory}` : '',
         typeof args.newNote === 'string' ? (args.newNote ? `the note to "${args.newNote}"` : 'remove the note') : '',
       ].filter(Boolean);
-      return `change ${changes.join(' and ') || 'that expense'}${changes.length ? ' on that expense' : ''}`;
+      return `change ${changes.join(' and ') || 'nothing'} on ${whichExpense(args)}`;
     }
     default:
       return `run ${name}`;

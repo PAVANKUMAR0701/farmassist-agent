@@ -98,6 +98,24 @@ export interface FarmAgentOptions {
   maxToolRounds?: number;
 }
 
+const ENTRY_ID = /\b(?:exp|act)_\d{8}_[0-9A-HJKMNP-TV-Z]{26}\b/g;
+
+/** Every entry id that appeared in this conversation (tool results, earlier replies' notes). */
+function knownEntryIds(messages: readonly ChatMessage[], lastExpenseId: string | undefined): Set<string> {
+  const ids = new Set(JSON.stringify(messages).match(ENTRY_ID) ?? []);
+  if (lastExpenseId) ids.add(lastExpenseId);
+  return ids;
+}
+
+/** Why the agent will not send this call, or undefined. Only corrections are checked: they name existing entries. */
+export function preflightError(name: string, args: Record<string, unknown>, known: ReadonlySet<string>): string | undefined {
+  if (name !== 'correct_entry' || args.entryId === undefined) return undefined; // `match` lookups are checked by the server
+  const id = String(args.entryId);
+  if (id.startsWith('act_')) return 'saved activities cannot be edited. To add details, record a new activity with them in the note';
+  if (!known.has(id)) return 'that entryId did not come from a tool result in this conversation. Find the expense with list_expenses (or use match with its date and category) instead of guessing an id';
+  return undefined;
+}
+
 /** Conversations stored before several changes could be held at once kept a single { name, args }. */
 function normalisePending(pending: unknown): PendingAction | undefined {
   if (!pending || typeof pending !== 'object') return undefined;
@@ -209,6 +227,20 @@ export class FarmAgent {
           // Remember what the farmer was actually shown, not the model's raw draft.
           messages[messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: turn.reply }] };
           return { turn, transcript: messages };
+        }
+        // A correction must name an expense this conversation has actually seen. Refuse anything else here,
+        // with guidance, so the model can recover now instead of asking the farmer to confirm a doomed change.
+        // Ids from before this response only: the model's own tool request must not vouch for its id.
+        const known = knownEntryIds(messages.slice(0, -1), this.lastExpenseId);
+        const refused = new Map(uses.map((u) => [u.id, preflightError(u.name, u.input, known)] as const).filter((r): r is [string, string] => r[1] !== undefined));
+        if (refused.size > 0) {
+          const results: ChatBlock[] = uses.map((u) => {
+            const error = refused.get(u.id) ?? 'not run, because another request in this step was refused; send it again if it is still needed';
+            if (refused.has(u.id)) toolCalls.push({ name: u.name, args: u.input, result: { isError: true, text: error } });
+            return { type: 'tool_result', toolUseId: u.id, text: error, isError: true };
+          });
+          messages.push({ role: 'user', content: results });
+          continue;
         }
         // Voice: every change the model asked for in this response is held and read back together.
         const changes = confirmWrites ? uses.filter((u) => CHANGING_TOOLS.has(u.name)) : [];

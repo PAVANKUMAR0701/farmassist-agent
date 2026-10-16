@@ -60,7 +60,8 @@ describe('describeAction', () => {
     expect(describeAction('record_expense', { amountRupees: 149.5, category: 'medicine', date: '2026-10-13' })).toBe('record ₹149.50 on medicine for 2026-10-13');
     expect(describeAction('record_farm_activity', { activityType: 'vaccination', animalOrField: 'brown cow' })).toBe('record vaccination for brown cow for today');
     expect(describeAction('record_farm_activity', { activityType: 'other', animalOrField: 'Lakshmi', note: 'calf named Seetha' })).toBe('record "calf named Seetha" for Lakshmi for today');
-    expect(describeAction('correct_entry', { entryId: 'exp_x', newAmountRupees: 900 })).toBe('change the amount to ₹900.00 on that expense');
+    expect(describeAction('correct_entry', { entryId: 'exp_20261013_01J00000000000000000000007', newAmountRupees: 900 })).toBe('change the amount to ₹900.00 on the expense from 2026-10-13');
+    expect(describeAction('correct_entry', { match: { category: 'feed' }, newCategory: 'fodder' })).toBe('change the category to fodder on the feed expense from today');
   });
 });
 
@@ -175,5 +176,35 @@ describe('several changes in one spoken message (live phone test, 2026-10-16)', 
     const agent = new FarmAgent({ tools, state: state as never, now: () => NOW });
     expect((await agent.handle('yes', { confirmWrites: true })).confirmed).toBe(true);
     expect(await expensesToday()).toMatchObject([{ amountPaise: 25000 }]);
+  });
+});
+
+describe('corrections are checked before the farmer is asked (live phone test, 2026-10-16)', () => {
+  it('an invented activity id never reaches a read-back; the model recovers with a new activity', async () => {
+    const requests: ModelRequest[] = [];
+    const script: ModelReply[] = [
+      use('correct_entry', { entryId: 'act_20261016_01M52935999999999999999999', newNote: 'Three more cows named Maya, Geeta and Saraswati' }),
+      use('record_farm_activity', { activityType: 'other', animalOrField: 'three new cows', note: 'named Maya, Geeta and Saraswati' }),
+    ];
+    const model: AgentModel = { modelId: 'scripted', respond: async (r) => (requests.push(structuredClone(r)), script.shift()!) };
+    const { agent, ledger } = setup(model);
+
+    const ask = await agent.handle('I have named three more cows Maya Geeta Saraswati', { confirmWrites: true });
+
+    // The model was told why, in the same turn, and its second attempt is what the farmer is asked about.
+    const refusal = requests[1]!.messages.at(-1)!.content[0] as { text: string; isError: boolean };
+    expect(refusal).toMatchObject({ isError: true, text: expect.stringContaining('saved activities cannot be edited') });
+    expect(ask.reply).toBe('Shall I record "named Maya, Geeta and Saraswati" for three new cows for today? Say yes to save it, or no to cancel.');
+    await agent.handle('yes', { confirmWrites: true });
+    expect(await ledger.getActivities({ farmId: TEST_FARM_ID, from: '2026-10-14', to: '2026-10-14' })).toMatchObject([{ animalOrField: 'three new cows' }]);
+  });
+
+  it('a guessed expense id is refused without calling the server, also for typed messages', async () => {
+    const script: ModelReply[] = [use('correct_entry', { entryId: 'exp_20261014_01J00000000000000000000099', newAmountRupees: 900 }), { content: [{ type: 'text', text: 'Which expense should I change?' }], stopReason: 'end_turn' }];
+    const model: AgentModel = { modelId: 'scripted', respond: async () => script.shift()! };
+    const { agent } = setup(model);
+    const turn = await agent.handle('no, it was 900');
+    expect(turn.toolCalls).toMatchObject([{ name: 'correct_entry', result: { isError: true, text: expect.stringContaining('did not come from a tool result') } }]);
+    expect(turn.reply).toBe('Which expense should I change?');
   });
 });

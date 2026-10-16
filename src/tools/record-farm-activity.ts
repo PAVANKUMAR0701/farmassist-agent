@@ -86,7 +86,9 @@ export function registerRecordFarmActivity(server: McpServer, deps: ToolDeps): v
 
         const structured = { activity: toActivityView(result.entry), duplicate: result.duplicate };
         const { activity } = structured;
-        const what = `${activity.activityType}${activity.animalOrField ? ` for ${activity.animalOrField}` : ''} on ${activity.date}`;
+        // "other" means nothing to a farmer; say what was actually recorded.
+        const kind = activity.activityType === 'other' && activity.note ? `"${activity.note}"` : activity.activityType;
+        const what = `${kind}${activity.animalOrField ? ` for ${activity.animalOrField}` : ''} on ${activity.date}`;
         const summary = result.duplicate ? `Already recorded earlier (no duplicate created): ${what}.` : `Recorded ${what}.`;
         return {
           content: [{ type: 'text' as const, text: `${summary}\n${JSON.stringify(structured)}` }],
