@@ -53,10 +53,34 @@ FARMASSIST_MCP_URL=https://<id>.lambda-url.ap-south-1.on.aws/mcp npm run agent -
 
 **Amazon Nova Lite** is the chosen model (32 of 33 evaluation turns correct, median 1.5 s; Nova Micro scored 8/33). See [docs/model-evaluation.md](docs/model-evaluation.md) and, for account setup, [docs/bedrock-access.md](docs/bedrock-access.md).
 
+## Web client
+
+A mobile-first web app (`web/`, plain TypeScript, no framework, about 13 KiB) with sign-in, **Chat**, **Today** (dashboard), **Expenses** and **Activities**. It is served by the chat Lambda (`src/chat/`), which also hosts the agent. The page and the API share one origin, so no CORS is needed and no extra hosting service is involved.
+
+- **Sign-in** uses Amazon Cognito. Accounts are created by an admin, and each has a `custom:farmId` the user cannot change. The backend takes the farm only from the verified ID token.
+- **The browser never holds AWS credentials or the MCP token.** The chat backend checks the Cognito token, then acts as an MCP client to the MCP server.
+- **Screens show only server-calculated amounts.** They call read-only MCP tools through `/api/read`. Writes go only through the agent.
+- **Without a model** (or when Bedrock fails) the chat works in "basic mode" through the deterministic parser.
+
+Run it locally (local dev sign-in, in-memory data, bound to 127.0.0.1 only):
+
+```bash
+npm run build:web
+npm run start:chat   # http://127.0.0.1:5173
+```
+
+**Create a sign-in user** after deploying (`UserPoolId` is a stack output). Pick your own temporary password; the app asks for a new one at first sign-in:
+
+```bash
+aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <username> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=demo-farm --temporary-password "<temporary password, 8+ chars with a number>" --message-action SUPPRESS
+```
+
 ## Deploy to AWS
 
 What gets created ([template.yaml](template.yaml)):
-- **Lambda** (Node.js 22, arm64) with a public **Function URL**. Access is controlled by the bearer token, which is checked in code.
+- **MCP Lambda** (Node.js 22, arm64) with a public **Function URL**. Access is controlled by the bearer token, which is checked in code.
+- **Chat Lambda** with its own Function URL. It serves the web client and the agent API, and checks Cognito ID tokens in code.
+- **Cognito user pool** for web sign-in (admin-created users only).
 - **DynamoDB** table, on-demand, with TTL, point-in-time recovery and encryption.
 - **CloudWatch** log group with 14-day retention. Each request writes one JSON log line with its method, status and latency (never the request body).
 
@@ -68,9 +92,10 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
    aws ssm put-parameter --region ap-south-1 --name /farmassist/dev/api-token --type SecureString --value "<token of 32+ characters>"
    ```
 
-2. Build and deploy:
+2. Build and deploy (`npm run build:web` first, because the chat Lambda bundles the web client):
 
    ```bash
+   npm run build:web
    sam build
    sam deploy --guided --region ap-south-1
    ```

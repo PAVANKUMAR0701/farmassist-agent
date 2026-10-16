@@ -30,7 +30,7 @@ describe('deterministic fallback: expenses', () => {
 describe('deterministic fallback: activities', () => {
   it.each([
     ['vaccinated the brown cow', 'vaccination', 'brown cow'],
-    ['Milked Lakshmi this morning', 'milking', 'lakshmi'],
+    ['Milked Lakshmi this morning', 'milking', 'Lakshmi'],
     ['irrigated the north field today', 'irrigation', 'north field'],
     ['harvested wheat', 'harvesting', 'wheat'],
   ])('"%s" -> %s of %s', (text, activityType, animalOrField) => {

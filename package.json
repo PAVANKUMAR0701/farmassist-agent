@@ -18,7 +18,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:lambda": "esbuild src/lambda/handler.ts --bundle --platform=node --target=node22 --format=esm --out-extension:.js=.mjs --sourcemap --outdir=dist \"--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
+    "build:lambda": "esbuild src/lambda/handler.ts --bundle --platform=node --target=node22 --format=esm --out-extension:.js=.mjs --sourcemap --outdir=dist \"--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build:web": "tsx scripts/build-web.ts",
+    "pretypecheck": "npm run build:web --silent",
+    "pretest": "npm run build:web --silent",
+    "start:chat": "tsx scripts/local-chat-server.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1151.0",
@@ -27,6 +31,7 @@
     "@aws-sdk/credential-providers": "3.1151.0",
     "@aws-sdk/lib-dynamodb": "3.1151.0",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "aws-jwt-verify": "5.2.1",
     "ulid": "3.0.2",
     "zod": "4.6.7"
   },

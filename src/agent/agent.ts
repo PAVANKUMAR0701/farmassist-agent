@@ -51,8 +51,16 @@ export interface AgentTurn {
   unverifiedNumbers?: string[];
 }
 
+/** Everything the agent remembers between messages; stored by the hosted chat backend between requests. */
+export interface AgentState {
+  history: ChatMessage[];
+  lastExpenseId?: string | undefined;
+}
+
 export interface FarmAgentOptions {
   tools: FarmToolClient;
+  /** Conversation so far, from exportState() of an earlier agent. */
+  state?: AgentState | undefined;
   model?: AgentModel | undefined;
   now?: () => Date;
   /** Model/tool rounds per message before the agent stops and reports what was done. */
@@ -96,6 +104,12 @@ export class FarmAgent {
     this.model = options.model;
     this.now = options.now ?? (() => new Date());
     this.maxToolRounds = options.maxToolRounds ?? 4;
+    this.history = options.state?.history ?? [];
+    this.lastExpenseId = options.state?.lastExpenseId;
+  }
+
+  exportState(): AgentState {
+    return { history: this.history, ...(this.lastExpenseId ? { lastExpenseId: this.lastExpenseId } : {}) };
   }
 
   get modelId(): string | undefined {

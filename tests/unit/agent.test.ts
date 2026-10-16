@@ -40,7 +40,7 @@ describe('MCP client', () => {
     const { tools } = setup();
     const list = await tools.listTools();
     expect(list.map((t) => t.name).sort()).toEqual(
-      ['correct_entry', 'get_daily_summary', 'get_expense_summary', 'health_check', 'list_expenses', 'record_expense', 'record_farm_activity', 'weekly_insights'].sort(),
+      ['correct_entry', 'get_daily_summary', 'get_expense_summary', 'health_check', 'list_activities', 'list_expenses', 'record_expense', 'record_farm_activity', 'weekly_insights'].sort(),
     );
     const record = list.find((t) => t.name === 'record_expense')!;
     expect(record.inputSchema).toMatchObject({ type: 'object', required: expect.arrayContaining(['amountRupees', 'category']) });
@@ -193,4 +193,14 @@ it('lets the parser answer when a tool-free model reply fails the number check',
   expect(turn).toMatchObject({ mode: 'fallback', numberCheck: 'replaced', unverifiedNumbers: ['1', '2', '3'] });
   expect(turn.reply).toContain('What was the ₹700 for?');
   expect(await expensesToday()).toHaveLength(0);
+});
+
+it('continues a conversation from exported state (as the stateless chat backend does)', async () => {
+  const { agent, tools, expensesToday } = setup();
+  await agent.handle('spent 2500 on feed');
+  const state = JSON.parse(JSON.stringify(agent.exportState())); // survives a round trip through storage
+  const next = new FarmAgent({ tools, state, now: () => NOW });
+  const turn = await next.handle('no, it was 900');
+  expect(turn.reply).toContain('₹2,500.00 → ₹900.00');
+  expect(await expensesToday()).toMatchObject([{ amountPaise: 90000 }]);
 });

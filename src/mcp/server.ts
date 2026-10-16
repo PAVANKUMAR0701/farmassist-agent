@@ -4,6 +4,7 @@ import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
 import { registerCorrectEntry } from '../tools/correct-entry.js';
 import { registerGetDailySummary } from '../tools/get-daily-summary.js';
 import { registerGetExpenseSummary } from '../tools/get-expense-summary.js';
+import { registerListActivities } from '../tools/list-activities.js';
 import { registerListExpenses } from '../tools/list-expenses.js';
 import { registerRecordExpense } from '../tools/record-expense.js';
 import { registerRecordFarmActivity } from '../tools/record-farm-activity.js';
@@ -63,6 +64,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   registerRecordFarmActivity(server, deps);
   registerCorrectEntry(server, deps);
   registerGetDailySummary(server, deps);
+  registerListActivities(server, deps);
   registerWeeklyInsights(server, deps);
 
   return server;

@@ -44,7 +44,15 @@ Teardown: `sam delete --stack-name farmassist-dev --region ap-south-1`, then del
 
 Model access check, 2026-10-16, personal account, ap-south-1: the `apac.amazon.nova-lite-v1:0` and `apac.amazon.nova-micro-v1:0` inference profiles are listed, but the first `converse` call to each fails with `ThrottlingException: Too many tokens per day`. Service Quotas shows every Nova Lite, Nova Micro and Nova 2 Lite quota at 0, and the per-day token quotas are marked not adjustable. Raising them needs an AWS Support case. The Bedrock account (231427841372) is blocked too, see bedrock-access.md.
 
-## Step 4: Web client — not started
+## Step 4: Web client and hosted chat backend — deployed; waiting on two account actions (2026-10-16)
+
+- `list_activities` MCP tool (read-only), since activities were only visible in daily summaries.
+- `src/chat/`: hosted chat backend. It verifies Cognito ID tokens (`aws-jwt-verify`; the farm comes only from the immutable `custom:farmId` claim), stores conversation state per farm and user in the ledger table (`CONV#`, 24 h TTL), runs the agent as an MCP client of the MCP Lambda, and allows only read-only tools on `/api/read`. Responses carry a strict CSP, `X-Frame-Options: DENY` and `nosniff`.
+- `web/`: mobile-first client (13 KiB, no framework). It has sign-in (including the first-sign-in new-password step and token refresh), Chat with suggestion chips and a "basic mode" badge, a Today dashboard, Expenses (period and category filters, "show more" paging, server total) and Activities. Error states cover offline, an expired session (back to sign-in), unreachable server (retry), empty lists and an unlinked farm.
+- `template.yaml`: Cognito user pool and client, chat function with its own URL, and `AgentModelId` / `AgentBedrockRoleArn` parameters. The chat role can only Get/Put on the table (for conversations), read the one SSM parameter, and optionally assume the one Bedrock role.
+- Tests: 245 in 21 files (14 new chat-backend tests: auth boundaries, validation, conversation continuity and per-user isolation, the read-only allowlist, 502 mapping, CSP, conversation TTL). Checked in the browser at 375×812 against the local server: sign-in, chat (record, correct across requests, activity, clarifying question), Today, Expenses and Activities. Three UI defects found there were fixed (newest reply hidden under the composer, duplicated action line, animal names lowercased).
+- Deployed: `WebAppUrl` serves the app (sign-in screen loads, no console errors). The API returns 401 without a token and with a forged one. The MCP smoke test is still 19/19.
+- **Waiting on you:** (1) create a Cognito sign-in user (README, "Web client"); (2) create the cross-account role `farmassist-agent-bedrock` in 231427841372 ([bedrock-access.md](bedrock-access.md#cross-account-role-for-the-deployed-agent)). Then: redeploy with the role, and test signed-in chat with Nova Lite on the deployed site.
 ## Step 5: Voice — not started
 ## Step 6: Weekly insights on the chosen model — not started
 ## Step 7: Multimodal retrieval — not started

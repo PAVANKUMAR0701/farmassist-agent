@@ -48,6 +48,65 @@ If that call fails with "Too many tokens per day", that account's Nova quotas ar
 
 ## Using it
 
-Local agent runs (`npm run agent`, see the README) read `AGENT_MODEL_ID` and `BEDROCK_AWS_PROFILE=M80PocBedrockKeys`.
+Local agent runs (`npm run agent`, `npm run agent-eval`) read `AGENT_MODEL_ID` and `BEDROCK_AWS_PROFILE=M80PocBedrockKeys`.
 
-The deployed Lambda shouldn't hold that user's keys. When the agent runs in AWS (Step 4), the Bedrock account should create a role that trusts the stack's `FunctionRoleArn` output and has the policy above. Set its ARN as `BedrockRoleArn`. The template already limits the function to `sts:AssumeRole` on that one role.
+The deployed chat function must not hold that IAM user's keys. Instead it assumes a role in the Bedrock account that trusts only the chat function's own role. The template already limits the function to `sts:AssumeRole` on the one role ARN you pass in.
+
+### Cross-account role for the deployed agent
+
+This needs an **admin of the Bedrock account (231427841372)**. The `Pavan_BedRock_MCP` user cannot create roles.
+
+Role name: `farmassist-agent-bedrock`
+
+**Trust policy.** Only the chat function's role (the stack output `ChatFunctionRoleArn`) may assume it:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::381492152939:role/farmassist-dev-ChatFunctionRole-KmnaKYpptu6w" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+**Permissions policy** (inline, named `InvokeNovaLite`). It allows only the model the agent uses:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:ap-south-1:231427841372:inference-profile/apac.amazon.nova-lite-v1:0",
+        "arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0"
+      ]
+    }
+  ]
+}
+```
+
+To create it with the CLI, save the two documents as `trust.json` and `invoke-nova-lite.json`. Use a profile with IAM admin rights in 231427841372:
+
+```bash
+aws iam create-role --profile <bedrock-account-admin> --role-name farmassist-agent-bedrock --assume-role-policy-document file://trust.json --description "FarmAssist chat agent (account 381492152939) invokes Nova Lite"
+aws iam put-role-policy --profile <bedrock-account-admin> --role-name farmassist-agent-bedrock --policy-name InvokeNovaLite --policy-document file://invoke-nova-lite.json
+```
+
+In the console, the same thing is: IAM → Roles → Create role → *Custom trust policy* (paste the trust policy) → no managed policies → name it `farmassist-agent-bedrock` → then *Add permissions → Create inline policy → JSON* (paste the permissions policy).
+
+Then redeploy with the role. In PowerShell:
+
+```powershell
+sam deploy --stack-name farmassist-dev --region ap-south-1 --profile MyPersonalAWSAccount --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --parameter-overrides AgentModelId=apac.amazon.nova-lite-v1:0 AgentBedrockRoleArn=arn:aws:iam::231427841372:role/farmassist-agent-bedrock
+```
+
+Notes:
+- The trust names the chat role's exact ARN. If that role is ever replaced (for example after deleting and recreating the stack), its ARN changes and the trust policy must be updated.
+- No external ID is needed: both accounts belong to the same owner, and no third party assumes the role.
+- Until this is done, the deployed agent runs in basic mode (the deterministic parser), and everything else works.

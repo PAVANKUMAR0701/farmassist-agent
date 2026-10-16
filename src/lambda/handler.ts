@@ -6,38 +6,15 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { APIGatewayProxyStructuredResultV2, LambdaFunctionURLEvent } from 'aws-lambda';
+import type { LambdaFunctionURLEvent } from 'aws-lambda';
 import { handleMcpRequest, type McpHttpConfig } from '../mcp/http.js';
 import { DynamoLedgerRepository } from '../repositories/dynamodb-ledger-repository.js';
 import { createNarratorFromEnv } from '../services/insight-narrator.js';
+import { toLambdaResult, toWebRequest, type FunctionUrlResult } from './function-url.js';
+
+export { toLambdaResult, toWebRequest, type FunctionUrlResult };
 
 export const MCP_PATH = '/mcp';
-
-/** Function URLs use the API Gateway v2 response shape; we always return the structured form, never a bare string. */
-export type FunctionUrlResult = APIGatewayProxyStructuredResultV2;
-
-/** Builds a web-standard Request from a Function URL event. */
-export function toWebRequest(event: LambdaFunctionURLEvent): Request {
-  const method = event.requestContext.http.method;
-  const url = `https://${event.requestContext.domainName}${event.rawPath}${event.rawQueryString ? `?${event.rawQueryString}` : ''}`;
-  const headers = new Headers();
-  for (const [name, value] of Object.entries(event.headers ?? {})) {
-    if (value !== undefined) headers.set(name, value);
-  }
-  const hasBody = method !== 'GET' && method !== 'HEAD' && event.body !== undefined;
-  const body = hasBody ? (event.isBase64Encoded ? Buffer.from(event.body!, 'base64').toString('utf8') : event.body) : undefined;
-  return new Request(url, { method, headers, body });
-}
-
-/** Converts a web-standard Response into a Function URL result. MCP responses are JSON text, never binary. */
-export async function toLambdaResult(response: Response): Promise<FunctionUrlResult> {
-  const text = await response.text();
-  return {
-    statusCode: response.status,
-    headers: Object.fromEntries(response.headers),
-    ...(text ? { body: text } : {}),
-  };
-}
 
 function requiredEnv(name: string): string {
   const value = process.env[name];

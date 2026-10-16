@@ -64,16 +64,16 @@ function findAmount(text: string): number | undefined {
 
 const firstMatch = <T>(table: Array<[T, RegExp]>, text: string): T | undefined => table.find(([, re]) => re.test(text))?.[0];
 
-/** "vaccinated the brown cow today" -> "brown cow". */
-function findSubject(text: string, verb: RegExp): string | undefined {
-  const match = verb.exec(text);
+/** "vaccinated the brown cow today" -> "brown cow". Works on the farmer's own text, so names keep their capitals. */
+function findSubject(text: string, verbPattern: RegExp): string | undefined {
+  const match = new RegExp(verbPattern.source, 'i').exec(text);
   if (!match) return undefined;
   const subject = text
     .slice(match.index + match[0].length)
-    .replace(/\b(today|yesterday|this morning|this evening|in the morning|in the evening)\b.*$/, '')
+    .replace(/\b(today|yesterday|this morning|this evening|in the morning|in the evening)\b.*$/i, '')
     .replace(ISO_DATE, '')
-    .split(/[,.;]| with | for | on | at /)[0]!
-    .replace(/^\s*(the|my|our|of|for)\s+/, '')
+    .split(/[,.;]| with | for | on | at /i)[0]!
+    .replace(/^\s*(the|my|our|of|for)\s+/i, '')
     .trim();
   return subject.length > 0 && subject.length <= 60 ? subject : undefined;
 }
@@ -134,7 +134,7 @@ export function decideFallback(message: string, context: FallbackContext, today:
   // 6. Farm activities (no money involved).
   const activity = firstMatch(ACTIVITY_WORDS, text);
   if (activity && amount === undefined) {
-    const animalOrField = findSubject(text, ACTIVITY_WORDS.find(([type]) => type === activity)![1]);
+    const animalOrField = findSubject(original.replace(/\s+/g, ' '), ACTIVITY_WORDS.find(([type]) => type === activity)![1]);
     return {
       kind: 'tool',
       name: 'record_farm_activity',

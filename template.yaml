@@ -50,8 +50,25 @@ Parameters:
       Optional IAM role to assume for Bedrock calls when Bedrock runs in a different AWS account.
       Empty means Bedrock is called with this function's own role in this account.
 
+  AgentModelId:
+    Type: String
+    Default: ''
+    Description: >
+      Bedrock model or inference profile for the chat agent, e.g. apac.amazon.nova-lite-v1:0.
+      Empty means the agent uses its deterministic command parser only.
+  AgentBedrockRoleArn:
+    Type: String
+    Default: ''
+    Description: >
+      Optional IAM role in the Bedrock account that the chat function assumes to call AgentModelId.
+      It must trust the ChatFunctionRoleArn output. Empty means Bedrock is called in this account.
+
 Conditions:
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+  HasAgentModel: !Not [!Equals [!Ref AgentModelId, '']]
+  HasAgentRole: !Not [!Equals [!Ref AgentBedrockRoleArn, '']]
+  AgentUsesBedrockInThisAccount: !And [!Condition HasAgentModel, !Not [!Condition HasAgentRole]]
+  AgentUsesBedrockRole: !And [!Condition HasAgentModel, !Condition HasAgentRole]
   HasBedrockModel: !Not [!Equals [!Ref BedrockModelId, '']]
   HasBedrockRole: !Not [!Equals [!Ref BedrockRoleArn, '']]
   UsesBedrockInThisAccount: !And [!Condition HasBedrockModel, !Not [!Condition HasBedrockRole]]
@@ -172,7 +189,145 @@ Resources:
         Banner:
           - js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
+  # ---- Web client sign-in ----------------------------------------------------------------------------
+
+  # Users are created by an admin (see README), each with a farmId they cannot change.
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub farmassist-${StageName}
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameConfiguration:
+        CaseSensitive: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireNumbers: true
+          RequireLowercase: true
+          RequireUppercase: false
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      Schema:
+        - Name: farmId
+          AttributeDataType: String
+          Mutable: false
+          StringAttributeConstraints:
+            MinLength: '1'
+            MaxLength: '64'
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub farmassist-web-${StageName}
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      IdTokenValidity: 60
+      AccessTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        IdToken: minutes
+        AccessToken: minutes
+        RefreshToken: days
+      ReadAttributes: [name, custom:farmId]
+      # custom:farmId is deliberately not writable by users.
+      WriteAttributes: [name]
+
+  # ---- Hosted chat backend + web client ------------------------------------------------------------
+
+  ChatFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/farmassist-chat-${StageName}
+      RetentionInDays: 14
+
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub farmassist-chat-${StageName}
+      Description: FarmAssist web client and chat backend (MCP client + agent)
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      Handler: handler.handler
+      CodeUri: .
+      MemorySize: 512
+      # A turn can take a few model and tool round trips.
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref ChatFunctionLogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          FARMASSIST_TABLE_NAME: !Ref LedgerTable
+          FARMASSIST_TOKEN_PARAMETER: !Ref ApiTokenParameterName
+          FARMASSIST_DEMO_FARM_ID: !Ref DemoFarmId
+          FARMASSIST_MCP_URL: !Sub '${McpFunctionUrl.FunctionUrl}mcp'
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          AGENT_MODEL_ID: !Ref AgentModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          BEDROCK_ROLE_ARN: !Ref AgentBedrockRoleArn
+          NODE_OPTIONS: --enable-source-maps
+      # Page and API share this one origin, so no CORS is needed. API calls are checked against Cognito in code.
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # Conversation memory only (CONV# items). Farm records are reached through the MCP server, never directly.
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt LedgerTable.Arn
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApiTokenParameterName}
+            - !If
+              - AgentUsesBedrockInThisAccount
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${BedrockRegion}:${AWS::AccountId}:inference-profile/${AgentModelId}
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
+              - !Ref AWS::NoValue
+            - !If
+              - AgentUsesBedrockRole
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Ref AgentBedrockRoleArn
+              - !Ref AWS::NoValue
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/chat/handler.ts
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        Target: node22
+        Platform: node
+        Minify: false
+        Sourcemap: true
+        Banner:
+          - js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
+
 Outputs:
+  WebAppUrl:
+    Description: The FarmAssist web client (sign in with a Cognito user, see README)
+    Value: !GetAtt ChatFunctionUrl.FunctionUrl
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  ChatFunctionRoleArn:
+    Description: Role the chat function runs as. The Bedrock account's role must trust this ARN.
+    Value: !GetAtt ChatFunctionRole.Arn
   McpEndpoint:
     Description: Streamable HTTP MCP endpoint
     Value: !Sub '${McpFunctionUrl.FunctionUrl}mcp'

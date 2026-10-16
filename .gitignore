@@ -18,3 +18,6 @@ samconfig.toml
 .DS_Store
 Thumbs.db
 *.log
+
+# Generated web bundle (npm run build:web)
+src/chat/web-assets.generated.ts

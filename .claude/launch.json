@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "farmassist-web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "scripts/local-chat-server.ts"],
+      "port": 5173,
+      "url": "http://127.0.0.1:5173"
+    }
+  ]
+}
