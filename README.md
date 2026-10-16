@@ -78,6 +78,8 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
    npm run smoke -- https://<id>.lambda-url.ap-south-1.on.aws/mcp
    ```
 
+   `npm run live-hardening -- <same URL>` also checks simultaneous retries, simultaneous corrections and pagination against the real table (needs AWS credentials that can read it). See [docs/protocol-tests.md](docs/protocol-tests.md).
+
 **Bedrock (optional):** set `BedrockModelId` (for example `in.anthropic.claude-haiku-4-5-20251001-v1:0`) to turn on Bedrock narration in `weekly_insights`. Leave it empty and the tool uses template text built from the same verified figures. If Bedrock runs in a different AWS account, also set `BedrockRoleArn`. The function then has permission only to assume that one role, and that role must trust the `FunctionRoleArn` stack output. For local runs, set `BEDROCK_MODEL_ID` and optionally `BEDROCK_AWS_PROFILE` in `.env.local` (see `.env.example`).
 
 **Cost guards:** everything is pay-per-request. Set `ReservedConcurrency` (for example 5) to cap concurrent executions, but only if your account's concurrency limit is above 10. New accounts often have exactly 10, which leaves nothing to reserve.

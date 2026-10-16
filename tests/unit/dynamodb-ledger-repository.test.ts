@@ -11,7 +11,7 @@ import {
 } from '../../src/repositories/ledger-repository.js';
 
 // These tests check the exact DynamoDB requests we build (keys, conditions, atomicity).
-// Real conditional-write behaviour is verified against a deployed table in the integration tests (Phase 2).
+// Real conditional-write and transaction behaviour is checked against the deployed table by scripts/live-hardening.ts.
 
 const TABLE = 'FarmLedgerTest';
 const NOW = new Date('2026-10-14T06:30:00Z');
@@ -100,6 +100,36 @@ describe('DynamoLedgerRepository.createExpense', () => {
     await expect(repo.createExpense(newExpense, { clientRequestId: 'req-12345678', fingerprint: 'fp-1' })).rejects.toBeInstanceOf(
       IdempotencyConflictError,
     );
+  });
+
+  it('replays the winner when a concurrent retry with the same clientRequestId causes a TransactionConflict', async () => {
+    ddb.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({
+        message: 'Transaction cancelled',
+        $metadata: {},
+        CancellationReasons: [{ Code: 'TransactionConflict' }, { Code: 'None' }],
+      }),
+    );
+    const winner = { ...item('2026-10-14', U(3)), amountPaise: 250000 };
+    ddb
+      .on(GetCommand, { Key: { PK: 'FARM#farm-1', SK: 'IDEM#req-12345678' } })
+      .resolves({ Item: { fingerprint: 'fp-1', entrySK: winner.SK } })
+      .on(GetCommand, { Key: { PK: 'FARM#farm-1', SK: winner.SK } })
+      .resolves({ Item: winner });
+
+    const result = await repo.createExpense({ ...newExpense, farmId: 'farm-1' }, { clientRequestId: 'req-12345678', fingerprint: 'fp-1' });
+    expect(result).toMatchObject({ duplicate: true, entry: { entryId: winner.entryId } });
+  });
+
+  it('rethrows a TransactionConflict when the other request has not committed a marker (nothing was written)', async () => {
+    const conflict = new TransactionCanceledException({
+      message: 'Transaction cancelled',
+      $metadata: {},
+      CancellationReasons: [{ Code: 'TransactionConflict' }, { Code: 'None' }],
+    });
+    ddb.on(TransactWriteCommand).rejects(conflict);
+    ddb.on(GetCommand).resolves({});
+    await expect(repo.createExpense(newExpense, { clientRequestId: 'req-12345678', fingerprint: 'fp-1' })).rejects.toBe(conflict);
   });
 
   it('rethrows other transaction failures unchanged', async () => {
@@ -250,6 +280,13 @@ describe('DynamoLedgerRepository corrections', () => {
       new TransactionCanceledException({ message: 'x', $metadata: {}, CancellationReasons: [{ Code: 'ConditionalCheckFailed' }, { Code: 'None' }] }),
     );
     ddb.on(GetCommand).resolves({ Item: { ...item('2026-10-14', U(7)), version: 2 } });
+    await expect(repo.correctExpense(correctionInput)).rejects.toBeInstanceOf(ConcurrentModificationError);
+  });
+
+  it('maps a TransactionConflict (another write to the same entry in flight) to ConcurrentModificationError', async () => {
+    ddb.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({ message: 'x', $metadata: {}, CancellationReasons: [{ Code: 'TransactionConflict' }, { Code: 'None' }] }),
+    );
     await expect(repo.correctExpense(correctionInput)).rejects.toBeInstanceOf(ConcurrentModificationError);
   });
 

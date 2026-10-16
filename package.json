@@ -12,6 +12,7 @@
     "dev": "tsx watch scripts/local-server.ts",
     "start:local": "tsx scripts/local-server.ts",
     "smoke": "tsx scripts/protocol-smoke.ts",
+    "live-hardening": "tsx scripts/live-hardening.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

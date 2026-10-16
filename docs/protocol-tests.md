@@ -137,3 +137,37 @@ Also checked by hand after the smoke run:
 - The function role has only `GetItem`/`PutItem`/`UpdateItem`/`Query` on the table, `ssm:GetParameter` on the one token parameter, and `AWSLambdaBasicExecutionRole`.
 - Table: on-demand, SSE on, point-in-time recovery on, TTL on `expiresAt`.
 - CloudWatch has one JSON line per request (method, path, status, latency) and no request bodies.
+
+## Contract hardening tests
+
+`tests/protocol/contract-hardening.test.ts` goes through the real HTTP handler and checks:
+- A `farmId` added to tool arguments is ignored. The entry goes to the token's farm.
+- 12 kinds of malformed `record_expense` arguments are refused without writing anything: amount sent as a string, negative, zero, over ₹1 crore or with 3 decimals; missing or unknown category; note over 200 characters; impossible, future or wrongly formatted date; and an invalid `clientRequestId`. `list_expenses` refuses `limit` above 50 and ranges longer than 366 days.
+- An unknown tool gets an error result and an unknown method gets JSON-RPC `-32601`. A body that isn't JSON-RPC gets 400.
+- JSON-RPC batches: SDK 1.32.1 still answers batches from older protocol versions, one reply per message. It refuses a batch of more than 100 messages (400, nothing run) and bodies over 4 MiB (413). Together these limits bound how much work one request can cause.
+
+## Live concurrency and pagination checks, 2026-10-16
+
+`npm run live-hardening -- <McpEndpoint>` runs against the deployed table (the unit tests mock DynamoDB). Its entries are dated January 2025, so they stay out of "today" and "this month".
+
+Before the fix, the deployed build failed one check. When two DynamoDB transactions race, DynamoDB cancels one with reason `TransactionConflict`, and the code only recognised `ConditionalCheckFailed`. The data stayed correct, but the losing request got the generic "temporary server problem" message:
+
+```
+PASS  5 parallel retries with one clientRequestId -> one stored entry
+      4/5 answered OK (1 created, 3 duplicate), 1 asked to retry; 1 entry stored
+FAIL  5 parallel corrections -> version, audit trail and final amount agree
+      2 corrected, 2 refused as concurrent, 1 other; stored version 3, 2 audit records, final ₹904
+```
+
+The fix: a `TransactionConflict` on an idempotent write now reads the marker and replays the original entry if it has been committed. On a correction, it becomes the usual "changed by another request" message. After redeploying, three runs in a row gave the same result each time:
+
+```
+PASS  5 parallel retries with one clientRequestId -> one stored entry
+      5/5 answered OK (1 created, 4 duplicate), 0 asked to retry; 1 entry stored
+PASS  5 parallel corrections -> version, audit trail and final amount agree
+      2 corrected, 3 refused as concurrent, 0 other; stored version 3, 2 audit records, final ₹905
+PASS  pagination returns every January entry once, newest first, adding up to the server total
+      33 entries over 4 pages, 33 unique; listed total 589740 paise vs summary 589740 (33 entries)
+```
+
+The smoke test still passes 19/19 on the new build.

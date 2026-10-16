@@ -32,6 +32,12 @@ import {
 /** Idempotency records expire after 7 days (DynamoDB TTL attribute `expiresAt`, epoch seconds). */
 const IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+/** Per-item cancellation codes of a failed transaction, or [] for any other error. */
+function cancellationCodes(error: unknown): string[] {
+  if (!(error instanceof TransactionCanceledException)) return [];
+  return (error.CancellationReasons ?? []).map((reason) => reason.Code ?? 'None');
+}
+
 /**
  * Single-table layout (see docs/data-model.md):
  *   expense:      PK = FARM#<farmId>   SK = EXP#<date>#<ulid>
@@ -257,9 +263,10 @@ export class DynamoLedgerRepository implements LedgerRepository {
         }),
       );
     } catch (error) {
-      const conditionFailed =
-        error instanceof TransactionCanceledException && error.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
-      if (!conditionFailed) throw error;
+      const codes = cancellationCodes(error);
+      // Another transaction was writing this entry at the same moment: nothing of ours was saved.
+      if (codes.includes('TransactionConflict')) throw new ConcurrentModificationError(input.entryId);
+      if (codes[0] !== 'ConditionalCheckFailed') throw error;
       const current = await this.getExpense(input.farmId, input.entryId);
       throw current ? new ConcurrentModificationError(input.entryId) : new EntryNotFoundError(input.entryId);
     }
@@ -332,6 +339,8 @@ export class DynamoLedgerRepository implements LedgerRepository {
       return { entry: toEntry(item), duplicate: false };
     }
 
+    /** Set when this write raced another request for the same marker (see below). */
+    let raceError: unknown;
     try {
       await this.client.send(
         new TransactWriteCommand({
@@ -358,9 +367,11 @@ export class DynamoLedgerRepository implements LedgerRepository {
       );
       return { entry: toEntry(item), duplicate: false };
     } catch (error) {
-      const markerAlreadyExists =
-        error instanceof TransactionCanceledException && error.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
-      if (!markerAlreadyExists) throw error;
+      const code = cancellationCodes(error)[0];
+      // TransactionConflict: a retry raced the original request for the same marker. If the original has
+      // committed, replay it; otherwise rethrow (this request wrote nothing, so the caller can safely retry).
+      if (code === 'TransactionConflict') raceError = error;
+      else if (code !== 'ConditionalCheckFailed') throw error;
     }
 
     // A previous request already used this clientRequestId: return its entry instead of writing a duplicate.
@@ -371,7 +382,10 @@ export class DynamoLedgerRepository implements LedgerRepository {
         ConsistentRead: true,
       }),
     );
-    if (!marker.Item) throw new Error('Idempotency marker vanished between write and read');
+    if (!marker.Item) {
+      if (raceError) throw raceError;
+      throw new Error('Idempotency marker vanished between write and read');
+    }
     if (marker.Item.fingerprint !== idempotency.fingerprint) throw new IdempotencyConflictError(idempotency.clientRequestId);
 
     const original = await this.client.send(
