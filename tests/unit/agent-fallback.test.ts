@@ -74,3 +74,11 @@ it('answers anything else with help, without calling a tool', () => {
   expect(decide('hello')).toEqual({ kind: 'reply', text: FALLBACK_HELP });
   expect(decide('   ')).toEqual({ kind: 'reply', text: FALLBACK_HELP });
 });
+
+it('never mistakes a quantity for money (live: "30 quintal of paddy" became "What was the ₹30 for?")', () => {
+  for (const text of ['Harvested 30 quintal of paddy', 'Lakshmi gave 8 litres', 'planted ragi on 2 acres', 'used 50 kg of seed']) {
+    expect(decide(text)).toMatchObject({ kind: 'reply', text: expect.stringContaining('basic mode') });
+  }
+  // Money is still money, even with a quantity in the sentence.
+  expect(decide('spent ₹1,200 on 50 kg of cattle feed')).toMatchObject({ kind: 'tool', name: 'record_expense', args: { amountRupees: 1200, category: 'feed' } });
+});

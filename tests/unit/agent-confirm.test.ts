@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FarmAgent } from '../../src/agent/agent.js';
-import { confirmationAnswer, describeAction } from '../../src/agent/confirm.js';
+import { confirmationAnswer, confirmationPrompt, describeAction } from '../../src/agent/confirm.js';
 import { FarmMcpClient } from '../../src/agent/mcp-client.js';
 import type { AgentModel, ModelReply, ModelRequest } from '../../src/agent/model.js';
 import { handleMcpRequest } from '../../src/mcp/http.js';
@@ -9,11 +9,11 @@ import { ENDPOINT, makeTestConfig, TEST_FARM_ID, TEST_TOKEN } from '../helpers/m
 const NOW = new Date('2026-10-14T06:30:00Z');
 
 function setup(model?: AgentModel) {
-  const { config, ledger } = makeTestConfig(NOW);
+  const { config, ledger, records } = makeTestConfig(NOW);
   const tools = new FarmMcpClient({ url: ENDPOINT, token: TEST_TOKEN, fetch: (url, init) => handleMcpRequest(new Request(url, init), config) });
   const agent = new FarmAgent({ tools, model, now: () => NOW });
   const expensesToday = () => ledger.getAllExpenses({ farmId: TEST_FARM_ID, from: '2026-10-14', to: '2026-10-14' });
-  return { agent, tools, ledger, expensesToday };
+  return { agent, tools, ledger, records, expensesToday };
 }
 
 class ScriptedModel implements AgentModel {
@@ -104,7 +104,11 @@ describe('voice turns: nothing is written until the farmer says yes', () => {
   });
 
   it('model: reads run, the write is held; confirmed after a storage round trip, with the same clientRequestId', async () => {
-    const model = new ScriptedModel([use('get_expense_summary', { period: 'today' }), use('record_expense', { amountRupees: 800, category: 'medicine' })]);
+    const model = new ScriptedModel([
+      use('get_expense_summary', { period: 'today' }),
+      use('record_expense', { amountRupees: 800, category: 'medicine' }),
+      { content: [{ type: 'text', text: 'Waiting for your answer.' }], stopReason: 'end_turn' },
+    ]);
     const { agent, tools, expensesToday } = setup(model);
     const ask = await agent.handle('paid 800 for medicine', { confirmWrites: true });
     expect(ask.toolCalls.map((c) => c.name)).toEqual(['get_expense_summary']);
@@ -117,7 +121,7 @@ describe('voice turns: nothing is written until the farmer says yes', () => {
     const next = new FarmAgent({ tools, model, state, now: () => NOW });
     const done = await next.handle('yes', { confirmWrites: true });
     expect(done.toolCalls[0]!.args.clientRequestId).toBe(heldId);
-    expect(model.calls).toBe(2); // the model is not asked again to run a confirmed write
+    expect(model.calls).toBe(3); // asked once more for other changes, then not again to run the confirmed write
     expect(await expensesToday()).toMatchObject([{ amountPaise: 80000, category: 'medicine' }]);
   });
 
@@ -161,11 +165,11 @@ describe('several changes in one spoken message (live phone test, 2026-10-16)', 
       stopReason: 'tool_use',
       content: [
         { type: 'tool_use', id: 't1', name: 'record_expense', input: { amountRupees: 600, category: 'feed' } },
-        { type: 'tool_use', id: 't2', name: 'record_expense', input: { amountRupees: 50000000, category: 'fuel' } },
+        { type: 'tool_use', id: 't2', name: 'record_expense', input: { amountRupees: 500, category: 'fuel', date: '2027-01-01' } }, // only the server knows "today"
       ],
     };
     const { agent, expensesToday } = setup(new ScriptedModel([mixed]));
-    await agent.handle('600 on feed and 5 crore on diesel', { confirmWrites: true });
+    await agent.handle('600 on feed and 500 on diesel next January', { confirmWrites: true });
     const done = await agent.handle('yes', { confirmWrites: true });
     expect(done.reply).toMatch(/^Recorded ₹600\.00 on feed for 2026-10-14\. Not saved: /);
     expect(await expensesToday()).toHaveLength(1);
@@ -234,5 +238,113 @@ describe('requests are checked against the tool schema before a read-back (live 
   it('read-backs never print "undefined" even for incomplete arguments', () => {
     expect(describeAction('record_farm_activity', { animalOrField: 'Lakshmi' })).toBe('record an activity for Lakshmi for today');
     expect(describeAction('record_expense', { amountRupees: 100 })).toBe('record ₹100.00 on an unknown category for today');
+  });
+});
+
+describe('read-backs for farm records', () => {
+  it('says plainly what will be saved', () => {
+    expect(describeAction('register_animal', { name: 'Maya', type: 'cow', breed: 'HF' })).toBe('register a cow named Maya (HF)');
+    expect(describeAction('update_animal', { animalName: 'Gita', newName: 'Geeta' })).toBe('rename Gita to Geeta');
+    expect(describeAction('update_animal', { animalName: 'Raju', status: 'sold' })).toBe('mark Raju as sold');
+    expect(describeAction('record_milk', { litres: 8.5, animalName: 'Lakshmi', session: 'morning' })).toBe('record 8.5 litres of milk from Lakshmi (morning) for today');
+    expect(describeAction('record_sowing', { crop: 'paddy', field: 'north field', areaAcres: 2, seedQuantity: 50 })).toBe('record sowing of paddy in north field (2 acres, 50 kg of seed) today');
+    expect(describeAction('record_harvest', { crop: 'ragi', quantity: 4, unit: 'quintal', final: true })).toBe('record a final harvest of 4 quintal of ragi for today');
+    expect(describeAction('add_insurance', { animalName: 'Lakshmi', insurer: 'United India', endDate: '2027-03-31' })).toBe('save insurance for Lakshmi with United India ending 2027-03-31');
+    expect(describeAction('add_reminder', { title: 'Deworm the calves', dueDate: '2026-11-01' })).toBe('remind you to "Deworm the calves" on 2026-11-01');
+  });
+
+  it('groups several new animals of one kind into one question', () => {
+    expect(
+      confirmationPrompt([
+        { name: 'register_animal', args: { name: 'Maya', type: 'cow' } },
+        { name: 'register_animal', args: { name: 'Geeta', type: 'cow' } },
+        { name: 'register_animal', args: { name: 'Saraswati', type: 'cow', breed: 'Gir' } },
+      ]),
+    ).toBe('Shall I register 3 cows: Maya, Geeta and Saraswati (Gir)? Say yes to save them, or no to cancel.');
+  });
+});
+
+
+it('voice: collects changes the model asks for one per round, and reads them all back together', async () => {
+  const one = (name: string): ModelReply => use('register_animal', { animals: [{ name, type: 'cow' }] });
+  const done: ModelReply = { content: [{ type: 'text', text: 'All four are ready.' }], stopReason: 'end_turn' };
+  // The same request twice (a model repeating itself) is held once.
+  const model = new ScriptedModel([one('Lakshmi'), one('Maya'), one('Maya'), one('Geeta'), one('Rita'), done]);
+  const { agent, records } = setup(model);
+  const ask = await agent.handle('I have 4 cows: Lakshmi, Maya, Geeta and Rita', { confirmWrites: true });
+  expect(ask.reply).toBe('Shall I register 4 cows: Lakshmi, Maya, Geeta and Rita? Say yes to save them, or no to cancel.');
+  expect(await records.list(TEST_FARM_ID, 'animal')).toHaveLength(0);
+  await agent.handle('yes', { confirmWrites: true });
+  expect((await records.list<{ name: string }>(TEST_FARM_ID, 'animal')).map((a) => a.data.name)).toEqual(['Lakshmi', 'Maya', 'Geeta', 'Rita']);
+});
+
+it('history shows a confirmed voice change as plain tool calls, never the read-back question', async () => {
+  const requests: ModelRequest[] = [];
+  const script: ModelReply[] = [
+    use('record_expense', { amountRupees: 1200, category: 'fuel' }),
+    { content: [{ type: 'text', text: 'Ready.' }], stopReason: 'end_turn' },
+    { content: [{ type: 'text', text: 'Hello again.' }], stopReason: 'end_turn' },
+  ];
+  const model: AgentModel = { modelId: 'scripted', respond: async (r) => (requests.push(structuredClone(r)), script.shift()!) };
+  const { agent } = setup(model);
+  await agent.handle('spent 1200 on diesel', { confirmWrites: true });
+  await agent.handle('yes', { confirmWrites: true });
+  await agent.handle('hi', { confirmWrites: true });
+
+  const seen = requests.at(-1)!.messages;
+  expect(JSON.stringify(seen)).not.toContain('Shall I');
+  expect(seen.map((m) => [m.role, m.content[0]!.type])).toEqual([
+    ['user', 'text'], // "spent 1200 on diesel"
+    ['assistant', 'tool_use'],
+    ['user', 'tool_result'],
+    ['assistant', 'text'], // the server's "Recorded ₹1,200.00 on fuel ..."
+    ['user', 'text'], // "hi"
+  ]);
+});
+
+it('ignores a clientRequestId the model sends (live: copied from history, so the server refused it as reused)', async () => {
+  const copied = 'agent-01M52DBD79D32ZXDD1CG63HZN9';
+  const requests: ModelRequest[] = [];
+  const script: ModelReply[] = [
+    use('record_expense', { amountRupees: 100, category: 'feed', clientRequestId: copied }),
+    { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' },
+  ];
+  const model: AgentModel = { modelId: 'scripted', respond: async (r) => (requests.push(structuredClone(r)), script.shift()!) };
+  const { agent, expensesToday } = setup(model);
+  await agent.handle('spent 100 on feed', { confirmWrites: true });
+  const done = await agent.handle('yes', { confirmWrites: true });
+  expect(done.toolCalls[0]!.args.clientRequestId).not.toBe(copied);
+  expect(await expensesToday()).toHaveLength(1);
+  // The model is not even offered the field.
+  const offered = requests[0]!.tools.find((t) => t.name === 'record_expense')!.inputSchema as { properties: object };
+  expect(offered.properties).not.toHaveProperty('clientRequestId');
+});
+
+it('reads back every insurance detail, so a premium saved as the cover or an invented policy number is heard (live, 2026-10-16)', () => {
+  expect(describeAction('add_insurance', { animalName: 'Lakshmi', insurer: 'United India', endDate: '2026-11-05', policyNumber: 'UND001', sumInsuredRupees: 1850 })).toBe(
+    'save insurance for Lakshmi with United India ending 2026-11-05, policy number UND001, cover ₹1,850.00',
+  );
+  expect(describeAction('register_animal', { animals: [{ name: 'Seetha', type: 'calf', birthDate: '2026-10-01', motherName: 'Lakshmi' }] })).toBe(
+    'register a calf named Seetha (born 2026-10-01, mother Lakshmi)',
+  );
+});
+
+
+describe('arguments are cleaned and checked before a read-back (live, 2026-10-16)', () => {
+  it('drops placeholders and zero amounts the farmer never said', async () => {
+    const { cleanArgs } = await import('../../src/agent/agent.js');
+    const schema = {
+      type: 'object',
+      required: ['insurer', 'endDate'],
+      properties: { insurer: { type: 'string' }, endDate: { type: 'string' }, policyNumber: { type: 'string' }, sumInsuredRupees: { type: 'number', exclusiveMinimum: 0 } },
+    };
+    expect(cleanArgs(schema, { insurer: 'United India', endDate: '2026-11-05', policyNumber: 'N/A', sumInsuredRupees: 0 })).toEqual({ insurer: 'United India', endDate: '2026-11-05' });
+  });
+
+  it('fixes enum case and plurals inside lists, and still bounces a truly invalid value', async () => {
+    const { cleanArgs, schemaProblems } = await import('../../src/agent/agent.js');
+    const schema = { type: 'object', required: ['animals'], properties: { animals: { type: 'array', items: { type: 'object', required: ['type'], properties: { type: { type: 'string', enum: ['cow', 'calf'] } } } } } };
+    expect(cleanArgs(schema, { animals: [{ type: 'Cows' }, { type: 'Calf' }] })).toEqual({ animals: [{ type: 'cow' }, { type: 'calf' }] });
+    expect(schemaProblems(schema, { animals: [{ type: 'cow' }, { type: 'dragon' }] })).toEqual(['"animals[1].type" must be one of "cow", "calf"']);
   });
 });

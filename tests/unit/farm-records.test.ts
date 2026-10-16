@@ -11,9 +11,9 @@ const ok = async (p: Promise<{ isError?: boolean; content: Array<{ text: string 
 describe('herd register', () => {
   it('registers animals one by one and counts the herd in code', async () => {
     const { config } = makeTestConfig();
-    await ok(callTool(config, 'register_animal', { name: 'Lakshmi', type: 'cow', breed: 'HF', birthDate: '2022-07-10' }));
-    await ok(callTool(config, 'register_animal', { name: 'Maya', type: 'cow' }));
-    const calf = await ok(callTool(config, 'register_animal', { name: 'Seetha', type: 'calf', motherName: 'Lakshmi', birthDate: '2026-10-01' }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Lakshmi', type: 'cow', breed: 'HF', birthDate: '2022-07-10' }] }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Maya', type: 'cow' }] }));
+    const calf = await ok(callTool(config, 'register_animal', { animals: [{ name: 'Seetha', type: 'calf', motherName: 'Lakshmi', birthDate: '2026-10-01' }] }));
     expect(calf.content[0]!.text.split('\n')[0]).toBe('Registered Seetha (calf). The herd now has 3 animals: 2 cows, 1 calf.');
 
     const list = await ok(callTool(config, 'list_animals', {}));
@@ -25,11 +25,11 @@ describe('herd register', () => {
 
   it('refuses a second active animal with the same name, but a retry of the same request is not a clash', async () => {
     const { config } = makeTestConfig();
-    const args = { name: 'Lakshmi', type: 'cow', clientRequestId: 'req-lakshmi-001' };
+    const args = { animals: [{ name: 'Lakshmi', type: 'cow' }], clientRequestId: 'req-lakshmi-001' };
     await ok(callTool(config, 'register_animal', args));
     const retry = await ok(callTool(config, 'register_animal', args));
     expect(retry.structuredContent.duplicate).toBe(true);
-    const clash = await callTool(config, 'register_animal', { name: 'lakshmi', type: 'cow' });
+    const clash = await callTool(config, 'register_animal', { animals: [{ name: 'lakshmi', type: 'cow' }] });
     expect(clash.isError).toBe(true);
     expect(clash.content[0]!.text).toContain('already called Lakshmi');
     expect((await ok(callTool(config, 'list_animals', {}))).structuredContent.total).toBe(1);
@@ -37,13 +37,13 @@ describe('herd register', () => {
 
   it('needs a name or tag, and refuses future birth dates', async () => {
     const { config } = makeTestConfig();
-    expect((await callTool(config, 'register_animal', { type: 'cow' })).isError).toBe(true);
-    expect((await callTool(config, 'register_animal', { name: 'X', type: 'cow', birthDate: '2026-12-01' })).isError).toBe(true);
+    expect((await callTool(config, 'register_animal', { animals: [{ type: 'cow' }] })).isError).toBe(true);
+    expect((await callTool(config, 'register_animal', { animals: [{ name: 'X', type: 'cow', birthDate: '2026-12-01' }] })).isError).toBe(true);
   });
 
   it('renames, re-types and marks an animal sold; sold animals leave the active herd', async () => {
     const { config } = makeTestConfig();
-    await ok(callTool(config, 'register_animal', { name: 'Gita', type: 'heifer' }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Gita', type: 'heifer' }] }));
     const renamed = await ok(callTool(config, 'update_animal', { animalName: 'gita', newName: 'Geeta', type: 'cow' }));
     expect(renamed.content[0]!.text.split('\n')[0]).toBe('Updated Geeta (cow): name Gita → Geeta, type heifer → cow.');
     const sold = await ok(callTool(config, 'update_animal', { animalName: 'Geeta', status: 'sold' }));
@@ -55,7 +55,7 @@ describe('herd register', () => {
 
   it('an unknown name lists the animals that exist, so the model can ask', async () => {
     const { config } = makeTestConfig();
-    await ok(callTool(config, 'register_animal', { name: 'Lakshmi', type: 'cow' }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Lakshmi', type: 'cow' }] }));
     const r = await callTool(config, 'update_animal', { animalName: 'Laxmi', breed: 'Gir' });
     expect(r.isError).toBe(true);
     expect(r.content[0]!.text).toContain('(registered: Lakshmi)');
@@ -65,8 +65,8 @@ describe('herd register', () => {
 describe('milk', () => {
   it('records milk per animal and session, and totals it exactly in code', async () => {
     const { config } = makeTestConfig();
-    await ok(callTool(config, 'register_animal', { name: 'Lakshmi', type: 'cow' }));
-    await ok(callTool(config, 'register_animal', { name: 'Maya', type: 'cow' }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Lakshmi', type: 'cow' }] }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Maya', type: 'cow' }] }));
     const first = await ok(callTool(config, 'record_milk', { litres: 8.5, session: 'morning', animalName: 'Lakshmi' }));
     expect(first.content[0]!.text.split('\n')[0]).toBe('Recorded 8.5 L of milk from Lakshmi (morning) on 2026-10-14. Milk recorded on 2026-10-14 so far: 8.5 L.');
     await ok(callTool(config, 'record_milk', { litres: 7.25, session: 'evening', animalName: 'Lakshmi' }));
@@ -125,7 +125,7 @@ describe('crops', () => {
 describe('insurance and reminders', () => {
   it('shows insurance ending soon and open reminders, soonest first; done reminders disappear', async () => {
     const { config } = makeTestConfig();
-    await ok(callTool(config, 'register_animal', { name: 'Lakshmi', type: 'cow' }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Lakshmi', type: 'cow' }] }));
     const policy = await ok(callTool(config, 'add_insurance', { animalName: 'Lakshmi', insurer: 'United India', policyNumber: 'UI-77', endDate: '2026-11-03', premiumRupees: 1850 }));
     expect(policy.content[0]!.text.split('\n')[0]).toBe(
       'Saved insurance for Lakshmi (cow) with United India (policy UI-77), premium ₹1,850.00, ending 2026-11-03 (in 20 days). It will show in reminders from 30 days before.',
@@ -149,8 +149,29 @@ describe('insurance and reminders', () => {
 
   it('refuses reminders in the past and insurance that ends before it starts', async () => {
     const { config } = makeTestConfig();
-    await ok(callTool(config, 'register_animal', { name: 'Lakshmi', type: 'cow' }));
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Lakshmi', type: 'cow' }] }));
     expect((await callTool(config, 'add_reminder', { title: 'x', dueDate: '2026-10-01' })).content[0]!.text).toContain('in the past');
     expect((await callTool(config, 'add_insurance', { animalName: 'Lakshmi', insurer: 'X', startDate: '2026-12-01', endDate: '2026-11-01' })).isError).toBe(true);
+  });
+});
+
+describe('registering several animals at once', () => {
+  it('registers a list in one call, and a retry of the same list creates nothing new', async () => {
+    const { config } = makeTestConfig();
+    const args = { animals: [{ name: 'Maya', type: 'cow' }, { name: 'Geeta', type: 'cow' }, { name: 'Saraswati', type: 'cow', breed: 'Gir' }], clientRequestId: 'req-three-cows-1' };
+    const r = await ok(callTool(config, 'register_animal', args));
+    expect(r.content[0]!.text.split('\n')[0]).toBe('Registered Maya (cow), Geeta (cow) and Saraswati (cow, Gir). The herd now has 3 animals: 3 cows.');
+    expect((await ok(callTool(config, 'register_animal', args))).structuredContent.duplicate).toBe(true);
+    expect((await ok(callTool(config, 'list_animals', {}))).structuredContent.total).toBe(3);
+  });
+
+  it('refuses the whole list, saving nothing, when a name repeats or is already taken', async () => {
+    const { config } = makeTestConfig();
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Lakshmi', type: 'cow' }] }));
+    const twice = await callTool(config, 'register_animal', { animals: [{ name: 'Rita', type: 'cow' }, { name: 'rita', type: 'calf' }] });
+    expect(twice.content[0]!.text).toContain('appears twice');
+    const taken = await callTool(config, 'register_animal', { animals: [{ name: 'Sita', type: 'cow' }, { name: 'Lakshmi', type: 'cow' }] });
+    expect(taken.content[0]!.text).toContain('Nothing was saved');
+    expect((await ok(callTool(config, 'list_animals', {}))).structuredContent.total).toBe(1);
   });
 });

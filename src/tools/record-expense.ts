@@ -42,7 +42,8 @@ export function registerRecordExpense(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Record a farm expense',
       description:
-        'Saves one farm expense to the farmer\'s ledger. Use only when the farmer clearly states an amount and what it was for. ' +
+        'Saves one farm expense (money spent) to the farmer\'s ledger. Use only when the farmer clearly states an amount of money and what it was for. ' +
+        'Not for events without money, such as a birth or naming an animal (use register_animal or record_farm_activity). ' +
         'Returns the saved entry with its entryId (needed to correct it later).',
       inputSchema,
       outputSchema,
@@ -54,6 +55,8 @@ export function registerRecordExpense(server: McpServer, deps: ToolDeps): void {
         const date = resolveEntryDate(args.date, todayInFarmTimeZone(deps.now()));
         const amountPaise = rupeesToPaise(args.amountRupees);
         const note = args.note || undefined;
+        // "other" alone says nothing about where the money went; the farmer has to be asked.
+        if (args.category === 'other' && !note) throw new ToolUserError('a note saying what the money was for is required when category is "other"; ask the farmer what it was');
         const idempotency = idempotencyFor(args.clientRequestId, 'expense', [amountPaise, args.category, note ?? null, args.date ?? null]);
 
         let result;

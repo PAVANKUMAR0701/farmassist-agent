@@ -163,8 +163,8 @@ export function registerCropTools(server: McpServer, deps: ToolDeps): void {
         cropId: z.string().max(40).optional(),
         crop: z.string().trim().min(1).max(40).optional().describe('Crop name when you do not have its id.'),
         field: z.string().trim().min(1).max(40).optional().describe('Field, if several fields grow the same crop.'),
-        quantity: quantity(10_000_000).describe('Amount harvested, as stated by the farmer.'),
-        unit: z.enum(MASS_UNITS).default('kg').describe('1 quintal = 100 kg, 1 tonne = 1000 kg.'),
+        quantity: quantity(10_000_000).describe('Amount harvested, exactly as the farmer said it. Do not convert: for "30 quintal" send 30 with unit "quintal".'),
+        unit: z.enum(MASS_UNITS).default('kg').describe('The unit the farmer used. FarmAssist converts it (1 quintal = 100 kg, 1 tonne = 1000 kg).'),
         date: entryDateInput,
         final: z.boolean().default(false).describe('True when this is the last harvest of this crop cycle.'),
         note: optionalText(200, 'Anything else, e.g. where it was sold.'),
@@ -226,7 +226,7 @@ export function registerCropTools(server: McpServer, deps: ToolDeps): void {
         const views = chosen.map((c) => cropView(c, harvests.filter((h) => h.data.cropId === c.id), today));
         const text =
           views.length === 0
-            ? `No ${args.status === 'all' ? '' : `${args.status} `}${args.crop ? cropName(args.crop) : 'crop'}s recorded.`
+            ? `No ${args.status === 'all' ? '' : `${args.status} `}${args.crop ? `${cropName(args.crop)} ` : ''}crops recorded.`
             : `${plural(views.length, 'crop')}: ${views
                 .slice(0, 5)
                 .map((v) => `${v.crop} in ${v.field} sown ${v.sownDate} (${v.status}${v.harvestCount ? `, harvested ${v.harvestedDisplay}` : `, ${v.daysSinceSowing} days`})`)

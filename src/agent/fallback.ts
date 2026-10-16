@@ -50,6 +50,10 @@ const PERIOD_WORDS: Array<[NamedPeriod, RegExp]> = [
 ];
 
 const ISO_DATE = /\b(\d{4}-\d{2}-\d{2})\b/;
+const QUANTITY = /\d[\d,.]*\s*(?:quintals?|qtls?|kgs?|kilos?|kilograms?|grams?|litres?|liters?|ltrs?|acres?|guntha|tonnes?|tons?)\b/;
+const MONEY = /₹|\brs\b|\brupees?\b|\binr\b|\brupaye\b/;
+export const BASIC_MODE_RECORDS =
+  'In basic mode I can record expenses and activities only. Milk, crops and the herd need the AI assistant, which is not answering right now. Please try again in a moment.';
 /** An amount: digits with optional Indian/Western grouping and up to 2 decimals, optionally marked as rupees. */
 const AMOUNT = /(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*(?:rupees|rs\b|₹)?/;
 
@@ -95,6 +99,10 @@ export function decideFallback(message: string, context: FallbackContext, today:
   const original = message.trim();
   const text = original.toLowerCase().replace(/\s+/g, ' ');
   if (!text) return { kind: 'reply', text: FALLBACK_HELP };
+
+  // "30 quintal of paddy", "8 litres of milk": quantities, not money. Basic mode cannot record those, and must
+  // never mistake them for an expense amount (seen live: "What was the ₹30 for?").
+  if (QUANTITY.test(text) && !MONEY.test(text)) return { kind: 'reply', text: BASIC_MODE_RECORDS };
 
   const amount = findAmount(text);
   const category = firstMatch(CATEGORY_WORDS, text);

@@ -17,6 +17,8 @@ export interface PendingAction {
   prompt: string;
   /** Who proposed them, for the turn that finally runs them. */
   mode: 'model' | 'fallback';
+  /** The farmer's message that asked for them (kept for the history once they are confirmed or cancelled). */
+  request?: string;
 }
 
 /** Most changes one confirmation may cover; a longer list is cut and the farmer told to send the rest again. */
@@ -28,6 +30,32 @@ function rupees(value: unknown): string {
   } catch {
     return `₹${String(value)}`; // invalid amounts are refused by the server when confirmed
   }
+}
+
+const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
+const article = (noun: string) => `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`;
+const pluralType = (type: string) => ({ calf: 'calves', sheep: 'sheep', buffalo: 'buffaloes' })[type] ?? `${type}s`;
+
+type AnimalArgs = Record<string, unknown>;
+/** register_animal takes a list; older single-animal arguments are read as a list of one. */
+const animalsOf = (args: Record<string, unknown>): AnimalArgs[] => (Array.isArray(args.animals) ? (args.animals as AnimalArgs[]) : [args]);
+const oneAnimal = (a: AnimalArgs) => {
+  const details = [
+    text(a.breed),
+    text(a.name) && text(a.tagNumber) ? `tag ${text(a.tagNumber)}` : undefined,
+    text(a.birthDate) ? `born ${text(a.birthDate)}` : undefined,
+    text(a.motherName) ? `mother ${text(a.motherName)}` : undefined,
+  ].filter(Boolean);
+  return `${text(a.name) ?? (text(a.tagNumber) ? `tag ${text(a.tagNumber)}` : 'unnamed')}${details.length ? ` (${details.join(', ')})` : ''}`;
+};
+
+/** "register 4 cows: Lakshmi (HF), Maya, Geeta and Rita", or "register a cow named Maya and a calf named Seetha". */
+function describeAnimals(animals: AnimalArgs[]): string {
+  const join = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+  const type = text(animals[0]?.type) ?? 'animal';
+  if (animals.length === 1) return `register ${article(type)}${text(animals[0]!.name) ? ` named ${oneAnimal(animals[0]!)}` : ` (${oneAnimal(animals[0]!)})`}`;
+  if (animals.every((a) => a.type === animals[0]!.type)) return `register ${animals.length} ${pluralType(type)}: ${join(animals.map(oneAnimal))}`;
+  return `register ${join(animals.map((a) => `${article(text(a.type) ?? 'animal')} named ${oneAnimal(a)}`))}`;
 }
 
 /** "the expense from 2026-10-16" (date taken from the entry id) or "the feed expense from today" (match lookup). */
@@ -58,6 +86,41 @@ export function describeAction(name: string, args: Record<string, unknown>): str
       ].filter(Boolean);
       return `change ${changes.join(' and ') || 'nothing'} on ${whichExpense(args)}`;
     }
+    case 'register_animal':
+      return describeAnimals(animalsOf(args));
+    case 'update_animal': {
+      const who = text(args.animalName) ?? 'that animal';
+      const changes = [
+        text(args.newName) && text(args.newName)!.toLowerCase() !== who.toLowerCase() ? `rename ${who} to ${text(args.newName)}` : '',
+        text(args.status) && args.status !== 'active' ? `mark ${who} as ${text(args.status)}` : '',
+        ...(['type', 'breed', 'sex', 'tagNumber', 'birthDate', 'motherName', 'notes'] as const).map((f) => (text(args[f]) ? `set ${who}'s ${f === 'tagNumber' ? 'tag' : f === 'birthDate' ? 'birth date' : f === 'motherName' ? 'mother' : f} to ${text(args[f])}` : '')),
+      ].filter(Boolean);
+      return changes.join(' and ') || `change ${who}`;
+    }
+    case 'record_milk':
+      return `record ${String(args.litres)} litres of milk${text(args.animalName) ? ` from ${text(args.animalName)}` : ' for the whole herd'}${args.session && args.session !== 'whole_day' ? ` (${String(args.session)})` : ''}${when(args)}`;
+    case 'record_sowing': {
+      const extra = [args.areaAcres !== undefined ? `${String(args.areaAcres)} acre${Number(args.areaAcres) === 1 ? '' : 's'}` : '', args.seedQuantity !== undefined ? `${String(args.seedQuantity)} ${text(args.seedUnit) ?? 'kg'} of seed` : '']
+        .filter(Boolean)
+        .join(', ');
+      return `record sowing of ${text(args.crop) ?? 'a crop'}${text(args.variety) ? ` (${text(args.variety)})` : ''} in ${text(args.field) ?? 'a field'}${extra ? ` (${extra})` : ''}${typeof args.sownDate === 'string' ? ` on ${args.sownDate}` : ' today'}`;
+    }
+    case 'record_harvest':
+      return `record a${args.final ? ' final' : ''} harvest of ${String(args.quantity)} ${text(args.unit) ?? 'kg'} of ${text(args.crop) ?? 'that crop'}${text(args.field) ? ` from ${text(args.field)}` : ''}${when(args)}`;
+    case 'add_insurance': {
+      // Every detail is read back: a premium saved as the cover, or a made-up policy number, must be audible.
+      const details = [
+        text(args.policyNumber) ? `policy number ${text(args.policyNumber)}` : '',
+        text(args.startDate) ? `starting ${text(args.startDate)}` : '',
+        args.premiumRupees !== undefined ? `premium ${rupees(args.premiumRupees)}` : '',
+        args.sumInsuredRupees !== undefined ? `cover ${rupees(args.sumInsuredRupees)}` : '',
+      ].filter(Boolean);
+      return `save insurance for ${text(args.animalName) ?? 'that animal'} with ${text(args.insurer) ?? 'the insurer'} ending ${text(args.endDate) ?? '(no end date)'}${details.length ? `, ${details.join(', ')}` : ''}`;
+    }
+    case 'add_reminder':
+      return `remind you to "${text(args.title) ?? ''}" on ${text(args.dueDate) ?? '(no date)'}`;
+    case 'complete_reminder':
+      return 'mark that reminder as done';
     default:
       return `run ${name}`;
   }
@@ -72,9 +135,12 @@ export function confirmationPrompt(changes: readonly ProposedChange[]): string {
   if (changes.length === 1) return `Shall I ${describeAction(changes[0]!.name, changes[0]!.args)}? Say yes to save it, or no to cancel.`;
 
   const sameDayExpenses = changes.every((c) => c.name === 'record_expense' && c.args.date === changes[0]!.args.date);
+  const allAnimals = changes.every((c) => c.name === 'register_animal');
   const body = sameDayExpenses
     ? `record ${changes.length} expenses${when(changes[0]!.args)}: ${list(changes.map((c) => `${rupees(c.args.amountRupees)} on ${typeof c.args.category === 'string' ? c.args.category : 'an unknown category'}`))}`
-    : list(changes.map((c) => describeAction(c.name, c.args)));
+    : allAnimals
+      ? describeAnimals(changes.flatMap((c) => animalsOf(c.args)))
+      : list(changes.map((c) => describeAction(c.name, c.args)));
   return `Shall I ${body}? Say yes to save them, or no to cancel.`;
 }
 

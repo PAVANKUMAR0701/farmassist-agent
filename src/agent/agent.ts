@@ -11,31 +11,48 @@ import { todayInFarmTimeZone } from '../shared/time.js';
 import { confirmationAnswer, confirmationPrompt, MAX_CHANGES_PER_CONFIRMATION, type PendingAction, type ProposedChange } from './confirm.js';
 import { decideFallback, FALLBACK_HELP } from './fallback.js';
 import type { FarmToolClient, ToolCallResult } from './mcp-client.js';
-import type { AgentModel, ChatBlock, ChatMessage } from './model.js';
+import type { AgentModel, ChatBlock, ChatMessage, ToolSpec } from './model.js';
 
 /** System prompt for one turn. The model is told today's date, since it cannot know it (and guesses badly). */
 export const agentSystemPrompt = (today: string) => [
   'You are FarmAssist, a helpful assistant for a small Indian dairy and crop farmer. The farmer may write in simple English or Hinglish.',
   `Today is ${today} (India time). Resolve words like "today", "yesterday" or a month name against this date; leave dates out of tool calls when the farmer means today.`,
   'Use the tools for every fact about the farm. Record expenses and activities with the tools; never just say you did.',
+  'Never ask the farmer to confirm a change yourself (no "Shall I record...?"): call the tool straight away. FarmAssist itself reads every change back when needed and saves it only after the farmer agrees.',
   'Rules:',
   '- Never calculate, estimate or round totals yourself. Quote amounts exactly as the tool results write them (for example ₹2,500.00).',
   '- Only record an expense when the farmer has stated the amount. If the amount or category is unclear, ask a short question instead of guessing. Use the category "other" only when the farmer says what it was and no other category fits.',
   '- To correct an expense, use its entryId from an earlier tool result in this conversation. Never invent ids.',
   '- New records may have any date up to today, including dates in the past. Only future dates are refused.',
-  '- To add details to an earlier activity (for example a calf\'s name), record a new activity (type "other" if nothing else fits) with the details in the note; earlier activities stay as they were.',
+  '- Animals: register each new animal with register_animal (one call per animal) and rename or change one with update_animal. Use list_animals for "how many cows". Do not use activities to name animals.',
+  '- Milk: record_milk (litres, per animal or for the whole herd); for any question about milk use get_milk_summary. Crops: record_sowing when planted, record_harvest for what came back, list_crops to compare. Insurance: add_insurance. Reminders: add_reminder and list_reminders.',
+  '- Refer to animals, crops and reminders by name; only use an id that a tool result in this conversation gave you.',
+  '- Pass quantities exactly as the farmer said them, with their unit (for example quantity 30 and unit "quintal"). Never convert units yourself.',
+  '- When an animal is sold or dies, call update_animal with only animalName and status ("sold" or "died"). Never copy details from one animal to another.',
+  '- To add details to an earlier activity, record a new activity (type "other" if nothing else fits) with the details in the note; earlier activities stay as they were.',
   '- If a tool returns an error, say plainly that nothing was saved and why. Never say something was recorded, updated or saved unless a tool result confirms it.',
   '- For a whole month or another explicit range, pass "from" and "to" (YYYY-MM-DD) and no "period".',
   '- For "how much" or "what did I spend" questions, call get_expense_summary (or get_daily_summary for one day) and repeat its total. list_expenses is only for showing entries: mention how many there are and at most three of them, and never total them.',
   '- Reply in 1 to 3 short, plain sentences: no markdown, lists or headings, and never mention entry ids. Do not give veterinary, medical or financial advice.',
 ].join('\n');
 
+/** What the model is told when a change is held for the farmer's confirmation (voice turns). */
+const HELD_FOR_CONFIRMATION =
+  'Accepted. FarmAssist will read it back to the farmer and save it after they say yes; do not ask them yourself. ' +
+  'Now call the tools for every other change in the farmer\'s message (for example each of the other animals) before replying. ' +
+  'When nothing is left, reply with one short sentence.';
+
+/** Sent to the model, as FarmAssist (not the farmer), when it claims a save without calling a tool. */
+const UNBACKED_CLAIM =
+  '[FarmAssist system note, not from the farmer] Nothing was saved: you did not call any tool. ' +
+  'Call the right tool now for what the farmer asked, or ask the farmer a short question if something is unclear.';
+
 /** Operator-only tools that the model is not offered (they only cost a round trip). */
 const HIDDEN_FROM_MODEL = new Set(['health_check']);
 /** Tools that write; the agent gives each call a clientRequestId so a retry can never record twice. */
-const WRITE_TOOLS = new Set(['record_expense', 'record_farm_activity']);
-/** Every tool that changes the ledger (creates or corrects). */
-const CHANGING_TOOLS = new Set([...WRITE_TOOLS, 'correct_entry']);
+const WRITE_TOOLS = new Set(['record_expense', 'record_farm_activity', 'register_animal', 'record_milk', 'record_sowing', 'record_harvest', 'add_insurance', 'add_reminder']);
+/** Every tool that changes the farm's records (creates, corrects or updates). */
+const CHANGING_TOOLS = new Set([...WRITE_TOOLS, 'correct_entry', 'update_animal', 'complete_reminder']);
 
 /** True when a reply says something was saved or changed ("has been updated", "I recorded", ...). */
 export function claimsSuccess(text: string): boolean {
@@ -98,7 +115,8 @@ export interface FarmAgentOptions {
   maxToolRounds?: number;
 }
 
-const ENTRY_ID = /\b(?:exp|act)_\d{8}_[0-9A-HJKMNP-TV-Z]{26}\b/g;
+/** Every id format a tool can return: ledger entries and farm records (see record-store.ts). */
+const ENTRY_ID = /\b(?:(?:exp|act|milk|rem)_\d{8}_|(?:ani|crop|ins)_|hrv_[0-9A-HJKMNP-TV-Z]{26}_)[0-9A-HJKMNP-TV-Z]{26}\b/g;
 
 /** Every entry id that appeared in this conversation (tool results, earlier replies' notes). */
 function knownEntryIds(messages: readonly ChatMessage[], lastExpenseId: string | undefined): Set<string> {
@@ -112,17 +130,71 @@ function knownEntryIds(messages: readonly ChatMessage[], lastExpenseId: string |
  * allowed values and basic types. The server still validates everything; this only stops the farmer from
  * being asked to confirm a request that cannot work (e.g. "record undefined for Lakshmi").
  */
-export function schemaProblems(schema: Record<string, unknown>, args: Record<string, unknown>): string[] {
-  const properties = (schema.properties ?? {}) as Record<string, { type?: string; enum?: unknown[] }>;
-  const problems = ((schema.required ?? []) as string[]).filter((field) => args[field] === undefined || args[field] === null).map((field) => `"${field}" is required`);
+interface PropertySpec {
+  type?: string;
+  enum?: unknown[];
+  minimum?: number;
+  exclusiveMinimum?: number;
+  maximum?: number;
+  items?: Record<string, unknown>;
+}
+
+export function schemaProblems(schema: Record<string, unknown>, args: Record<string, unknown>, path = ''): string[] {
+  const properties = (schema.properties ?? {}) as Record<string, PropertySpec>;
+  const problems = ((schema.required ?? []) as string[]).filter((field) => args[field] === undefined || args[field] === null).map((field) => `"${path}${field}" is required`);
   for (const [field, value] of Object.entries(args)) {
     const spec = properties[field];
+    const name = `"${path}${field}"`;
     if (!spec || value === undefined) continue;
-    if (spec.enum && !spec.enum.includes(value)) problems.push(`"${field}" must be one of ${spec.enum.map((v) => JSON.stringify(v)).join(', ')}`);
-    else if ((spec.type === 'number' || spec.type === 'integer') && typeof value !== 'number') problems.push(`"${field}" must be a number`);
-    else if (spec.type === 'string' && typeof value !== 'string') problems.push(`"${field}" must be text`);
+    if (spec.enum && !spec.enum.includes(value)) problems.push(`${name} must be one of ${spec.enum.map((v) => JSON.stringify(v)).join(', ')}`);
+    else if (spec.type === 'number' || spec.type === 'integer') {
+      if (typeof value !== 'number') problems.push(`${name} must be a number`);
+      else if ((spec.exclusiveMinimum !== undefined && value <= spec.exclusiveMinimum) || (spec.minimum !== undefined && value < spec.minimum)) problems.push(`${name} is too small`);
+      else if (spec.maximum !== undefined && value > spec.maximum) problems.push(`${name} is too large`);
+    } else if (spec.type === 'string' && typeof value !== 'string') problems.push(`${name} must be text`);
+    else if (spec.type === 'array') {
+      if (!Array.isArray(value)) problems.push(`${name} must be a list`);
+      else if (spec.items?.type === 'object') {
+        value.forEach((item, i) => {
+          if (item && typeof item === 'object') problems.push(...schemaProblems(spec.items!, item as Record<string, unknown>, `${path}${field}[${i}].`));
+          else problems.push(`"${path}${field}[${i}]" must be an object`);
+        });
+      }
+    }
   }
   return problems;
+}
+
+/** Values models put in optional fields instead of leaving them out. */
+const PLACEHOLDER = /^\s*(n\/?a|na|none|nil|null|unknown|unspecified|not (given|known|provided|specified|said|mentioned)|-+|\?+)\s*$/i;
+
+/**
+ * Removes what the farmer did not say: placeholder text and zero amounts in optional fields (seen live:
+ * "policy number N/A", "cover ₹0"), and fixes the case of enum values ("Cow" -> "cow").
+ */
+export function cleanArgs(schema: Record<string, unknown> | undefined, args: Record<string, unknown>): Record<string, unknown> {
+  if (!schema) return args;
+  const properties = (schema.properties ?? {}) as Record<string, PropertySpec>;
+  const required = new Set((schema.required ?? []) as string[]);
+  const out: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(args)) {
+    const spec = properties[field];
+    if (spec && !required.has(field)) {
+      if (typeof value === 'string' && PLACEHOLDER.test(value)) continue;
+      if (typeof value === 'number' && value <= 0 && (spec.exclusiveMinimum === 0 || (spec.minimum ?? 0) > 0)) continue;
+    }
+    if (spec?.enum && typeof value === 'string') {
+      const match = spec.enum.find((e) => typeof e === 'string' && (e === value.trim().toLowerCase() || `${e}s` === value.trim().toLowerCase()));
+      out[field] = match ?? value;
+      continue;
+    }
+    if (spec?.type === 'array' && spec.items?.type === 'object' && Array.isArray(value)) {
+      out[field] = value.map((item) => (item && typeof item === 'object' ? cleanArgs(spec.items, item as Record<string, unknown>) : item));
+      continue;
+    }
+    out[field] = value;
+  }
+  return out;
 }
 
 /** Why the agent will not send this call, or undefined. Only corrections are checked: they name existing entries. */
@@ -134,11 +206,37 @@ export function preflightError(
 ): string | undefined {
   const invalid = schema ? schemaProblems(schema, args) : [];
   if (invalid.length > 0) return `invalid arguments (${invalid.join('; ')}). Fix them and call ${name} again`;
+  // Any record id in a change must have come from this conversation; names are looked up by the server.
+  for (const field of ['animalId', 'cropId', 'reminderId']) {
+    const value = args[field];
+    if (typeof value === 'string' && !known.has(value)) {
+      return `that ${field} did not come from a tool result in this conversation. Use the name instead (animalName, or crop and field), or look it up with list_animals, list_crops or list_reminders, instead of guessing an id`;
+    }
+  }
   if (name !== 'correct_entry' || args.entryId === undefined) return undefined; // `match` lookups are checked by the server
   const id = String(args.entryId);
   if (id.startsWith('act_')) return 'saved activities cannot be edited. To add details, record a new activity with them in the note';
   if (!known.has(id)) return 'that entryId did not come from a tool result in this conversation. Find the expense with list_expenses (or use match with its date and category) instead of guessing an id';
   return undefined;
+}
+
+/**
+ * Fields the model is not offered: the retry id (the agent fills it in) and animal/crop ids. Active animal
+ * names are unique, so names are enough, and models invent ids (seen live) but say names correctly.
+ */
+const MODEL_HIDDEN_FIELDS = ['clientRequestId', 'animalId', 'cropId'];
+
+/** Tool arguments without the fields the model must not set (some models copy them from history). */
+function withoutRequestId(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([k]) => !MODEL_HIDDEN_FIELDS.includes(k)));
+}
+
+/** The tool as the model sees it. */
+function withoutRequestIdField(tool: ToolSpec): ToolSpec {
+  const schema = tool.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+  if (!schema.properties || !MODEL_HIDDEN_FIELDS.some((f) => f in schema.properties!)) return tool;
+  const properties = Object.fromEntries(Object.entries(schema.properties).filter(([k]) => !MODEL_HIDDEN_FIELDS.includes(k)));
+  return { ...tool, inputSchema: { ...schema, properties, ...(schema.required ? { required: schema.required.filter((r) => !MODEL_HIDDEN_FIELDS.includes(r)) } : {}) } };
 }
 
 /** Conversations stored before several changes could be held at once kept a single { name, args }. */
@@ -195,7 +293,7 @@ export class FarmAgent {
     this.tools = options.tools;
     this.model = options.model;
     this.now = options.now ?? (() => new Date());
-    this.maxToolRounds = options.maxToolRounds ?? 4;
+    this.maxToolRounds = options.maxToolRounds ?? 6;
     this.history = options.state?.history ?? [];
     this.lastExpenseId = options.state?.lastExpenseId;
     this.pending = normalisePending(options.state?.pending);
@@ -219,35 +317,73 @@ export class FarmAgent {
     this.pending = undefined;
     if (pending) {
       const answer = confirmationAnswer(message);
-      if (answer !== 'other') {
-        const turn = answer === 'yes' ? await this.runConfirmed(pending) : { reply: 'Okay, nothing was saved.', mode: pending.mode, toolCalls: [], confirmed: false };
-        this.rememberAsText(message, turn);
+      if (answer === 'yes') {
+        const turn = await this.runConfirmed(pending);
+        this.rememberConfirmed(pending, turn);
         return turn;
       }
+      // Cancelled or dropped: the history keeps one neutral line, never the read-back dialogue.
+      this.rememberPlain(pending.request ?? message, answer === 'no' ? 'The farmer cancelled this; nothing was saved.' : 'Not confirmed by the farmer; nothing was saved.');
+      if (answer === 'no') return { reply: 'Okay, nothing was saved.', mode: pending.mode, toolCalls: [], confirmed: false };
     }
 
     const confirmWrites = options.confirmWrites === true;
-    if (!this.model) {
-      const turn = await this.handleWithFallback(message, confirmWrites);
-      this.rememberAsText(message, turn);
+    const { turn, transcript } = this.model
+      ? await this.handleWithModel(message, this.model, confirmWrites)
+      : { turn: await this.handleWithFallback(message, confirmWrites), transcript: undefined };
+    const nowHeld = this.pending as PendingAction | undefined; // set again by hold() during this turn
+    if (turn.confirmation && nowHeld) {
+      // The question is not kept in the history: models copy what they see there and start asking
+      // "Shall I...?" themselves instead of calling the tools (seen with Nova Lite). Kept for later instead.
+      nowHeld.request = message;
       return turn;
     }
-    const { turn, transcript } = await this.handleWithModel(message, this.model, confirmWrites);
     if (transcript) this.remember(transcript);
     else this.rememberAsText(message, turn);
     return turn;
   }
 
+  /**
+   * A confirmed change goes into the history as if the model had called the tools straight away:
+   * the farmer's request, the tool calls, the server's results and the reply. That is the behaviour the
+   * model should repeat next time.
+   */
+  private rememberConfirmed(pending: PendingAction, turn: AgentTurn): void {
+    // Ids must be unique across the whole history, or the model can pair results with the wrong calls.
+    const ids = pending.changes.map(() => `confirmed-${ulid()}`);
+    const uses: ChatBlock[] = pending.changes.map((c, i) => ({ type: 'tool_use', id: ids[i]!, name: c.name, input: withoutRequestId(c.args) }));
+    const results: ChatBlock[] = turn.toolCalls.map((c, i) => ({ type: 'tool_result', toolUseId: ids[i]!, text: c.result.text, isError: c.result.isError }));
+    this.remember([
+      ...this.history,
+      { role: 'user', content: [{ type: 'text', text: pending.request ?? 'yes' }] },
+      { role: 'assistant', content: uses },
+      { role: 'user', content: results },
+      { role: 'assistant', content: [{ type: 'text', text: turn.reply }] },
+    ]);
+  }
+
+  private rememberPlain(userText: string, assistantText: string): void {
+    this.history.push({ role: 'user', content: [{ type: 'text', text: userText }] }, { role: 'assistant', content: [{ type: 'text', text: assistantText }] });
+    this.trimHistory();
+  }
+
   /** Returns the turn and, when the model finished normally, the full transcript (tool blocks included) to keep. */
   private async handleWithModel(message: string, model: AgentModel, confirmWrites: boolean): Promise<{ turn: AgentTurn; transcript?: ChatMessage[] }> {
     const toolCalls: AgentToolCall[] = [];
+    const held: ProposedChange[] = [];
+    let nudged = false;
     const messages: ChatMessage[] = [...this.history, { role: 'user', content: [{ type: 'text', text: message }] }];
     try {
-      const tools = (await this.tools.listTools()).filter((t) => !HIDDEN_FROM_MODEL.has(t.name));
+      const tools = (await this.tools.listTools()).filter((t) => !HIDDEN_FROM_MODEL.has(t.name)).map(withoutRequestIdField);
       for (let round = 0; round < this.maxToolRounds; round++) {
         const reply = await model.respond({ system: agentSystemPrompt(todayInFarmTimeZone(this.now())), messages, tools });
         messages.push({ role: 'assistant', content: reply.content });
-        const uses = reply.content.filter((b): b is Extract<ChatBlock, { type: 'tool_use' }> => b.type === 'tool_use');
+        // Retry ids are the agent's job: one the model sends (often copied from history) is dropped.
+        const uses = reply.content
+          .filter((b): b is Extract<ChatBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+          .map((u) => ({ ...u, input: cleanArgs(tools.find((t) => t.name === u.name)?.inputSchema, withoutRequestId(u.input)) }));
+        // Voice: once the model has asked for everything, the farmer hears one read-back of all of it.
+        if (uses.length === 0 && held.length > 0) return { turn: { ...this.hold(held, 'model'), toolCalls } };
         if (uses.length === 0) {
           const text = cleanModelText(
             reply.content
@@ -255,6 +391,19 @@ export class FarmAgent {
               .map((b) => b.text)
               .join(' '),
           );
+          // A claim that something was saved, with nothing saved this turn, is never shown (seen live with
+          // Nova Lite: "Recorded sowing paddy..." without any tool call). The model gets one chance to call the tool.
+          // (A change that was tried and refused is handled below, with the server's own reason.)
+          const triedChange = toolCalls.some((c) => CHANGING_TOOLS.has(c.name));
+          if (claimsSuccess(text) && !triedChange) {
+            if (!nudged) {
+              nudged = true;
+              console.warn(JSON.stringify({ level: 'warn', message: 'Model claimed a save without a tool call; asking it to call the tool' }));
+              messages.push({ role: 'user', content: [{ type: 'text', text: UNBACKED_CLAIM }] });
+              continue;
+            }
+            return { turn: { reply: 'Nothing was saved. Please say that again in a few words, for example "Lakshmi gave 8 litres this morning".', mode: 'model', toolCalls, claimCheck: 'replaced' } };
+          }
           const turn = await this.checkedModelReply(text, message, toolCalls);
           if (turn.mode === 'fallback') return { turn }; // the parser answered instead; keep it as text
           // Remember what the farmer was actually shown, not the model's raw draft.
@@ -280,21 +429,28 @@ export class FarmAgent {
           messages.push({ role: 'user', content: results });
           continue;
         }
-        // Voice: every change the model asked for in this response is held and read back together.
-        const changes = confirmWrites ? uses.filter((u) => CHANGING_TOOLS.has(u.name)) : [];
-        if (changes.length > 0) return { turn: { ...this.hold(changes.map((u) => ({ name: u.name, args: u.input })), 'model'), toolCalls } };
         const results: ChatBlock[] = [];
         for (const use of uses) {
+          // Voice: changes are collected, not run. Models often ask for one per round ("4 cows" = 4 rounds),
+          // so the model is told each one is held and asked for the rest.
+          if (confirmWrites && CHANGING_TOOLS.has(use.name)) {
+            if (!held.some((h) => h.name === use.name && JSON.stringify(h.args) === JSON.stringify(use.input))) held.push({ name: use.name, args: use.input });
+            results.push({ type: 'tool_result', toolUseId: use.id, text: HELD_FOR_CONFIRMATION, isError: false });
+            continue;
+          }
           const call = await this.runTool(use.name, use.input);
           toolCalls.push(call);
           results.push({ type: 'tool_result', toolUseId: use.id, text: call.result.text, isError: call.result.isError });
         }
         messages.push({ role: 'user', content: results });
       }
+      if (held.length > 0) return { turn: { ...this.hold(held, 'model'), toolCalls } };
       return { turn: { reply: this.summariseToolCalls(toolCalls), mode: 'model', toolCalls } };
     } catch (error) {
       const modelError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       console.error(JSON.stringify({ level: 'error', message: 'Agent model turn failed', modelId: model.modelId, error: error instanceof Error ? error.name : 'Unknown' }));
+      // Nothing held has been written, so it can still be read back.
+      if (held.length > 0) return { turn: { ...this.hold(held, 'model'), toolCalls, modelError } };
       // Something may already have been written this turn: report it rather than risk doing it twice.
       if (toolCalls.length > 0) return { turn: { reply: this.summariseToolCalls(toolCalls), mode: 'model', toolCalls, modelError } };
       return { turn: { ...(await this.handleWithFallback(message, confirmWrites)), modelError } };

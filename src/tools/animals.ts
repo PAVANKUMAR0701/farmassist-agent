@@ -69,56 +69,78 @@ export function registerAnimalTools(server: McpServer, deps: ToolDeps): void {
   server.registerTool(
     'register_animal',
     {
-      title: 'Register an animal',
+      title: 'Register animals',
       description:
-        'Adds one animal to the farm\'s herd register (cow, buffalo, calf, ...). Call it once per animal: for "three new cows named Maya, Geeta and Saraswati" call it three times. ' +
-        'Use this, not record_farm_activity, whenever the farmer gets, names or registers an animal.',
-      inputSchema: { ...animalFields, clientRequestId: clientRequestIdInput },
-      outputSchema: { animal: animalViewSchema, duplicate: z.boolean(), herd: z.array(z.object({ type: z.string(), count: z.number().int() })) },
+        'Adds animals to the farm\'s herd register (cows, buffaloes, calves, ...). Put every animal the farmer mentions in one call: ' +
+        'for "three new cows named Maya, Geeta and Saraswati" send three entries in animals. ' +
+        'Use this, not record_farm_activity, whenever the farmer gets, names or registers animals.',
+      inputSchema: {
+        animals: z.array(z.object(animalFields)).min(1).max(10).describe('One entry per animal, in the order the farmer said them.'),
+        clientRequestId: clientRequestIdInput,
+      },
+      outputSchema: {
+        animals: z.array(animalViewSchema),
+        duplicate: z.boolean().describe('True if this exact request was already saved earlier; nothing new was created.'),
+        herd: z.array(z.object({ type: z.string(), count: z.number().int() })),
+      },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args, extra) =>
       runTool('register_animal', async () => {
         const farmId = farmIdFromAuth(extra.authInfo);
         const today = todayInFarmTimeZone(deps.now());
-        if (!args.name && !args.tagNumber) throw new ToolUserError('give the animal a name or a tag number (ask the farmer what it is called)');
-        checkDates(args, today);
-        const existing = await deps.records.list<AnimalData>(farmId, 'animal');
-        const data: AnimalData = {
-          ...(args.name ? { name: args.name } : {}),
-          type: args.type,
-          ...(args.breed ? { breed: args.breed } : {}),
-          ...(args.sex ? { sex: args.sex } : {}),
-          ...(args.tagNumber ? { tagNumber: args.tagNumber } : {}),
-          ...(args.birthDate ? { birthDate: args.birthDate } : {}),
-          ...(args.motherName ? { motherName: args.motherName } : {}),
-          ...(args.acquiredDate ? { acquiredDate: args.acquiredDate } : {}),
-          status: 'active',
-          ...(args.notes ? { notes: args.notes } : {}),
-        };
-        const idempotency = idempotencyFor(args.clientRequestId, 'register_animal', [data]);
-        let result: { record: FarmRecord<AnimalData>; duplicate: boolean };
+        const entries = args.animals.map((a, i): { data: AnimalData; idempotency: ReturnType<typeof idempotencyFor> } => {
+          if (!a.name && !a.tagNumber) throw new ToolUserError(`animal ${i + 1} needs a name or a tag number (ask the farmer what it is called)`);
+          checkDates(a, today);
+          const data: AnimalData = {
+            ...(a.name ? { name: a.name } : {}),
+            type: a.type,
+            ...(a.breed ? { breed: a.breed } : {}),
+            ...(a.sex ? { sex: a.sex } : {}),
+            ...(a.tagNumber ? { tagNumber: a.tagNumber } : {}),
+            ...(a.birthDate ? { birthDate: a.birthDate } : {}),
+            ...(a.motherName ? { motherName: a.motherName } : {}),
+            ...(a.acquiredDate ? { acquiredDate: a.acquiredDate } : {}),
+            status: 'active',
+            ...(a.notes ? { notes: a.notes } : {}),
+          };
+          // One marker per animal, so a retried list completes without creating any animal twice.
+          const id = args.clientRequestId ? `${args.clientRequestId}-${i + 1}` : undefined;
+          return { data, idempotency: idempotencyFor(id, 'register_animal', [data]) };
+        });
+
+        let results: Array<{ record: FarmRecord<AnimalData>; duplicate: boolean }>;
         try {
-          // A retry of a request that already succeeded returns the original, before any name check.
-          const earlier = idempotency ? await deps.records.findCreated<AnimalData>(farmId, idempotency) : undefined;
-          if (earlier) {
-            result = { record: earlier, duplicate: true };
-          } else {
-            const clash = existing.find((a) => a.data.status === 'active' && sameName(a.data.name, args.name));
-            if (clash) {
-              throw new ToolUserError(`an active animal is already called ${clash.data.name} (${animalLabel(clash.data)}, id ${clash.id}). Use another name, or update_animal to change that one`);
-            }
-            result = await deps.records.create(farmId, newRecordId('animal'), data, idempotency);
+          // Retries of animals already saved are found first, so they are not mistaken for name clashes.
+          const earlier = await Promise.all(entries.map((e) => (e.idempotency ? deps.records.findCreated<AnimalData>(farmId, e.idempotency) : undefined)));
+          const existing = (await deps.records.list<AnimalData>(farmId, 'animal')).filter((a) => a.data.status === 'active');
+          const names = new Set<string>();
+          entries.forEach((e, i) => {
+            if (earlier[i] || !e.data.name) return;
+            const key = e.data.name.toLowerCase();
+            if (names.has(key)) throw new ToolUserError(`the name ${e.data.name} appears twice in this list`);
+            names.add(key);
+            const clash = existing.find((a) => sameName(a.data.name, e.data.name));
+            if (clash) throw new ToolUserError(`an active animal is already called ${clash.data.name} (${animalLabel(clash.data)}). Use another name, or update_animal to change that one. Nothing was saved`);
+          });
+          results = [];
+          for (const [i, e] of entries.entries()) {
+            const found = earlier[i];
+            results.push(found ? { record: found, duplicate: true } : await deps.records.create(farmId, newRecordId('animal'), e.data, e.idempotency));
           }
         } catch (error) {
           if (error instanceof IdempotencyConflictError) throw new ToolUserError(error.message);
           throw error;
         }
+
         const herd = countByType((await deps.records.list<AnimalData>(farmId, 'animal')).filter((a) => a.data.status === 'active').map((a) => a.data));
-        const animal = toAnimalView(result.record, today);
+        const animals = results.map((r) => toAnimalView(r.record, today));
         const total = herd.reduce((n, h) => n + h.count, 0);
-        const text = `${result.duplicate ? 'Already registered earlier (no duplicate created)' : 'Registered'} ${animalLabel(result.record.data)}. The herd now has ${plural(total, 'animal')}: ${describeCounts(herd)}.`;
-        return { content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify({ animal, duplicate: result.duplicate, herd })}` }], structuredContent: { animal, duplicate: result.duplicate, herd } };
+        const duplicate = results.every((r) => r.duplicate);
+        const listText = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+        const text = `${duplicate ? 'Already registered earlier (no duplicate created):' : 'Registered'} ${listText(results.map((r) => animalLabel(r.record.data)))}. The herd now has ${plural(total, 'animal')}: ${describeCounts(herd)}.`;
+        const structured = { animals, duplicate, herd };
+        return { content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }], structuredContent: structured };
       }),
   );
 

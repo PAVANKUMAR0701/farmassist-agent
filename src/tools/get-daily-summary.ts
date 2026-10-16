@@ -4,6 +4,7 @@ import { farmIdFromAuth } from '../auth/bearer.js';
 import { summarizeExpenses } from '../domain/expense-summary.js';
 import { TooManyEntriesError } from '../repositories/ledger-repository.js';
 import { formatPaise } from '../shared/money.js';
+import { formatLitres } from '../shared/quantity.js';
 import { isValidIsoDate, todayInFarmTimeZone } from '../shared/time.js';
 import { activityViewSchema, toActivityView } from './record-farm-activity.js';
 import { entryViewSchema, toEntryView, type ToolDeps } from './shared.js';
@@ -22,6 +23,8 @@ const outputSchema = {
   topCategory: z.string().optional().describe('Category with the most money spent that day; absent when nothing was spent.'),
   expenses: z.array(entryViewSchema).describe('In recording order.'),
   activities: z.array(activityViewSchema).describe('In recording order.'),
+  milkTotalMillilitres: z.number().int(),
+  milkTotalDisplay: z.string(),
   calculatedBy: z.literal('server').describe('Totals are added up by FarmAssist code from saved entries, not estimated.'),
 };
 
@@ -31,7 +34,7 @@ export function registerGetDailySummary(server: McpServer, deps: ToolDeps): void
     {
       title: 'Daily summary',
       description:
-        'Returns everything recorded for one day (default: today): verified expense total, spending by category, and every expense and activity. ' +
+        'Returns everything recorded for one day (default: today): verified expense total, spending by category, every expense and activity, and the milk total. ' +
         'Use this for "what did I do today" or "what happened yesterday". Repeat the returned amounts exactly; never add them up yourself.',
       inputSchema,
       outputSchema,
@@ -45,11 +48,12 @@ export function registerGetDailySummary(server: McpServer, deps: ToolDeps): void
         if (!isValidIsoDate(date)) throw new ToolUserError(`date "${date}" is not a real calendar date in YYYY-MM-DD format`);
         if (date > today) throw new ToolUserError(`date ${date} is in the future (today in India is ${today})`);
 
-        let expenses, activities;
+        let expenses, activities, milk;
         try {
-          [expenses, activities] = await Promise.all([
+          [expenses, activities, milk] = await Promise.all([
             deps.ledger.getAllExpenses({ farmId, from: date, to: date }),
             deps.ledger.getActivities({ farmId, from: date, to: date }),
+            deps.records.list<{ millilitres: number }>(farmId, 'milk', { from: date, to: date }),
           ]);
         } catch (error) {
           if (error instanceof TooManyEntriesError) throw new ToolUserError(error.message);
@@ -73,6 +77,8 @@ export function registerGetDailySummary(server: McpServer, deps: ToolDeps): void
           ...(summary.groups[0] ? { topCategory: summary.groups[0].key } : {}),
           expenses: expenses.map(toEntryView),
           activities: activities.map(toActivityView),
+          milkTotalMillilitres: milk.reduce((sum, m) => sum + m.data.millilitres, 0),
+          milkTotalDisplay: formatLitres(milk.reduce((sum, m) => sum + m.data.millilitres, 0)),
           calculatedBy: 'server' as const,
         };
 
@@ -82,7 +88,7 @@ export function registerGetDailySummary(server: McpServer, deps: ToolDeps): void
             ? 'No expenses'
             : `Spent ${structured.expenseTotalDisplay} (${count(summary.entryCount, 'expense', 'expenses')}, most on ${structured.topCategory})`;
         const done = activities.length === 0 ? 'no activities' : count(activities.length, 'activity', 'activities');
-        const text = `${date}: ${spent}; ${done} recorded.`;
+        const text = `${date}: ${spent}; ${done} recorded${milk.length ? `; ${structured.milkTotalDisplay} of milk` : ''}.`;
         return {
           content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }],
           structuredContent: structured,

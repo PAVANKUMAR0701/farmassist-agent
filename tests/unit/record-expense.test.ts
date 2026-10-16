@@ -92,3 +92,12 @@ describe('record_expense tool', () => {
     }
   });
 });
+
+it('refuses category "other" without a note saying what it was for', async () => {
+  const { makeTestConfig: make, callTool: call } = await import('../helpers/mcp-http.js');
+  const { config } = make();
+  const r = await call(config, 'record_expense', { amountRupees: 700, category: 'other' });
+  expect(r.isError).toBe(true);
+  expect(r.content[0]!.text).toContain('ask the farmer what it was');
+  expect((await call(config, 'record_expense', { amountRupees: 700, category: 'other', note: 'salt lick' })).isError).toBeFalsy();
+});

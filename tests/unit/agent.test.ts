@@ -143,11 +143,11 @@ describe('agent with a model', () => {
 
   it('stops after the round limit and reports what the tools did', async () => {
     const loop = () => use('health_check', {});
-    const model = new ScriptedModel([loop, loop, loop, loop, loop]);
+    const model = new ScriptedModel([loop, loop, loop, loop, loop, loop, loop]);
     const { agent } = setup(model);
     const turn = await agent.handle('are you there');
-    expect(turn.toolCalls).toHaveLength(4);
-    expect(model.requests).toHaveLength(4);
+    expect(turn.toolCalls).toHaveLength(6);
+    expect(model.requests).toHaveLength(6);
   });
 
   it('gives the model the earlier entryId so it can correct by id on the next turn', async () => {
@@ -284,5 +284,24 @@ describe('number check in turns without tool calls (live phone test, 2026-10-16)
 
   it('quantityNumbersIn finds only amounts and quantities', () => {
     expect(quantityNumbersIn('1. Lakshmi gave 12.5 litres, 2. ₹2,500 for 3 bags, 74% done, 3 cows')).toEqual(['12.5', '2500', '3', '74']);
+  });
+});
+
+describe('a save claimed without any tool call (live with Nova Lite, 2026-10-16)', () => {
+  it('asks the model once to call the tool, and the tool call then happens', async () => {
+    const model = new ScriptedModel([say('Recorded 8 litres of milk from Lakshmi.'), use('record_expense', { amountRupees: 900, category: 'feed' }), say('Saved ₹900.00 on feed.')]);
+    const { agent, expensesToday } = setup(model);
+    const turn = await agent.handle('spent 900 on feed');
+    expect(model.requests[1]!.messages.at(-1)!.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('Nothing was saved: you did not call any tool') });
+    expect(turn.reply).toBe('Saved ₹900.00 on feed.');
+    expect(await expensesToday()).toHaveLength(1);
+  });
+
+  it('never shows the claim if the model still does not call a tool', async () => {
+    const model = new ScriptedModel([say('Recorded it.'), say('I have recorded it for you.')]);
+    const { agent, expensesToday } = setup(model);
+    const turn = await agent.handle('spent 900 on feed');
+    expect(turn).toMatchObject({ claimCheck: 'replaced', reply: expect.stringMatching(/^Nothing was saved\./) });
+    expect(await expensesToday()).toHaveLength(0);
   });
 });
