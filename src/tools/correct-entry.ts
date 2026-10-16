@@ -97,7 +97,7 @@ export function registerCorrectEntry(server: McpServer, deps: ToolDeps): void {
         if (args.entryId) {
           const parsed = parseEntryId(args.entryId);
           if (!parsed) throw new ToolUserError(`"${args.entryId}" is not a valid entry id`);
-          if (parsed.kind !== 'expense') throw new ToolUserError('only expenses can be corrected; activities cannot be edited yet');
+          if (parsed.kind !== 'expense') throw new ToolUserError('only expenses can be corrected; saved activities cannot be edited. To add details, record a new activity with them in the note');
           target = await deps.ledger.getExpense(farmId, args.entryId);
           if (!target) throw new ToolUserError(`no expense with id ${args.entryId} was found`);
         } else {

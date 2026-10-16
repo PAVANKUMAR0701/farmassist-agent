@@ -219,7 +219,7 @@ describe('never claims a change the server refused', () => {
     const { agent } = setup(model);
     await agent.handle('New calf born for Lakshmi cow');
     const turn = await agent.handle("Lakshmi's calf is named Seetha");
-    expect(turn).toMatchObject({ claimCheck: 'replaced', reply: 'Nothing was saved. Only expenses can be corrected; activities cannot be edited yet.' });
+    expect(turn).toMatchObject({ claimCheck: 'replaced', reply: 'Nothing was saved. Only expenses can be corrected; saved activities cannot be edited. To add details, record a new activity with them in the note.' });
   });
 
   it('keeps an honest reply or a question after a failed write', async () => {

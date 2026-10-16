@@ -47,6 +47,12 @@ The first round scored Nova Lite at 10/11, then 8/11, and Nova Micro at 8/11, th
 
 Nova Lite: **34/36**, median 1.6 s. The new "calf is named Seetha" case passes 3/3 (it records a new activity, and the reply is true). "List a month" stays at 1/3: Nova Lite sometimes totals or numbers the 20 listed rows. The number guard replaced every one of those replies with the server's own line, so the farmer never saw a wrong figure.
 
+## Live retest and final round (13 cases × 3 runs)
+
+On the phone, the deployed guard did its job. In a fresh chat, "New lakshmi's calf named as seetha" first made Nova Lite try to edit an activity, with an entry id it invented. The server refused, and the farmer saw "Nothing was saved. …" instead of a false claim. The same message sent again was recorded as a new activity. To make the model recover in one go, the server's refusal now says what to do ("To add details, record a new activity with them in the note"), and a fresh-chat case was added to the evaluation.
+
+Nova Lite: **39/39**, median 1.5 s, max 4.4 s per turn. Both calf cases pass 3/3, and "list a month" passed 3/3 in this round (it was the weak case before; the number guard still protects it).
+
 ## Live end-to-end check
 
 `npm run agent` with Nova Lite: "paid 1750 to the labourer on 2025-01-23" followed by "no, it was 1500". DynamoDB then held the labour expense at 150000 paise, version 2, with a `CORR#` audit item of 175000 → 150000.

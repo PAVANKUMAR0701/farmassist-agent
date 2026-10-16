@@ -77,6 +77,18 @@ const cases: Case[] = [
     },
   },
   {
+    // Live 2026-10-16: in a fresh chat the model tried to edit an activity (with an invented id) before recording.
+    name: 'new chat: calf name is recorded in one go',
+    messages: [`Lakshmi's new calf, born on ${D}, is named Seetha`],
+    check: (t) => {
+      if (t.claimCheck) return 'claimed a change the server refused (reply replaced)';
+      const added = call(t, 'record_farm_activity');
+      return added && /seetha/i.test(`${added.args.note ?? ''} ${added.args.animalOrField ?? ''}`)
+        ? undefined
+        : `expected a new activity mentioning Seetha, got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args, c.result.isError ? 'ERROR' : 'ok']))}`;
+    },
+  },
+  {
     name: 'Hinglish expense',
     messages: [`${D} ko 300 rupaye ka diesel liya`],
     check: (t) => expectCall(t, 'record_expense', { amountRupees: 300, category: 'fuel', date: D }),
