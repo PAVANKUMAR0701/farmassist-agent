@@ -60,8 +60,9 @@ export function resolveDateRange(
   args: { period?: NamedPeriod | undefined; from?: string | undefined; to?: string | undefined },
   today: string,
 ): DateRange & { label: string } {
-  if (args.period && (args.from || args.to)) throw new ToolUserError('give either "period" or "from"/"to", not both');
-  if (args.period || (!args.from && !args.to)) {
+  // Explicit dates are more specific than a named period, so they win (models often send both; refusing led
+  // a model to retry with the wrong period).
+  if (!args.from && !args.to) {
     const period = args.period ?? 'this_month';
     return { ...resolveNamedPeriod(period, today), label: period };
   }

@@ -180,7 +180,7 @@ export function cleanArgs(schema: Record<string, unknown> | undefined, args: Rec
   for (const [field, value] of Object.entries(args)) {
     const spec = properties[field];
     if (spec && !required.has(field)) {
-      if (typeof value === 'string' && PLACEHOLDER.test(value)) continue;
+      if (typeof value === 'string' && (value.trim() === '' || PLACEHOLDER.test(value))) continue;
       if (typeof value === 'number' && value <= 0 && (spec.exclusiveMinimum === 0 || (spec.minimum ?? 0) > 0)) continue;
     }
     if (spec?.enum && typeof value === 'string') {
@@ -528,6 +528,10 @@ export class FarmAgent {
     const checked = toolCalls.length === 0 ? quantityNumbersIn(text) : numbersIn(text);
     const unverified = checked.filter((n) => !allowed.has(n));
     if (text && unverified.length === 0) return { reply: text, mode: 'model', toolCalls, numberCheck: 'passed' };
+    // An empty reply is not a number problem. After tools ran, the server's own words answer the farmer;
+    // with nothing done at all, the model failed this turn and the parser takes over.
+    if (!text && toolCalls.length > 0) return { reply: this.summariseToolCalls(toolCalls), mode: 'model', toolCalls };
+    if (!text) return { ...(await this.handleWithFallback(message)), modelError: 'EmptyReply: the model returned no text and no tool call' };
     console.warn(JSON.stringify({ level: 'warn', message: 'Model reply replaced', unverifiedNumbers: unverified.length, empty: !text }));
     if (toolCalls.length === 0) return { ...(await this.handleWithFallback(message)), numberCheck: 'replaced', unverifiedNumbers: unverified };
     return { reply: this.summariseToolCalls(toolCalls), mode: 'model', toolCalls, numberCheck: 'replaced', unverifiedNumbers: unverified };

@@ -64,8 +64,13 @@ describe('get_expense_summary', () => {
     expect(r.structuredContent).toMatchObject({ totalPaise: 0, totalDisplay: '₹0.00', entryCount: 0, groups: [] });
   });
 
+  it('uses explicit dates when a period is sent as well (models often send both)', async () => {
+    const { config } = makeTestConfig();
+    const r = await callTool(config, 'get_expense_summary', { period: 'last_month', from: '2026-10-01', to: '2026-10-14' });
+    expect(r.structuredContent.range).toEqual({ from: '2026-10-01', to: '2026-10-14', label: 'custom' });
+  });
+
   it.each([
-    ['period and from together', { period: 'today', from: '2026-10-01' }],
     ['to without from', { to: '2026-10-01' }],
     ['from after to', { from: '2026-10-10', to: '2026-10-01' }],
     ['impossible date', { from: '2026-02-30' }],

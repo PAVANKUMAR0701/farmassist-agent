@@ -47,6 +47,19 @@ const expectCall = (turn: AgentTurn, name: string, args: Record<string, unknown>
   return undefined;
 };
 
+/**
+ * The calf's name is kept: registered in the herd (or refused only because a Seetha is already registered,
+ * which happens on the shared demo farm after the first run), or as a new activity. Never claimed falsely.
+ */
+const calfNamed: Check = (t) => {
+  if (t.claimCheck) return 'claimed a change the server refused (reply replaced)';
+  const registered = t.toolCalls.find(
+    (c) => c.name === 'register_animal' && JSON.stringify(c.args).toLowerCase().includes('seetha') && (!c.result.isError || /already called seetha/i.test(c.result.text)),
+  );
+  const noted = t.toolCalls.find((c) => c.name === 'record_farm_activity' && !c.result.isError && /seetha/i.test(JSON.stringify(c.args)));
+  return registered || noted ? undefined : `expected Seetha registered or noted, got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args, c.result.isError ? 'ERROR' : 'ok']))}`;
+};
+
 const cases: Case[] = [
   { name: 'record expense', messages: [`I spent 2500 rupees on cattle feed on ${D}`], check: (t) => expectCall(t, 'record_expense', { amountRupees: 2500, category: 'feed', date: D }) },
   {
@@ -68,25 +81,13 @@ const cases: Case[] = [
     // Live bug 2026-10-16: the model tried to edit the activity (refused) and then claimed it was updated.
     name: 'new detail about an animal is recorded, not claimed',
     messages: [`New calf born to Lakshmi on ${D}`, `Lakshmi's calf born on ${D} is named Seetha`],
-    check: (t) => {
-      if (t.claimCheck) return 'claimed a change the server refused (reply replaced)';
-      const added = call(t, 'record_farm_activity');
-      return added && /seetha/i.test(`${added.args.note ?? ''} ${added.args.animalOrField ?? ''}`)
-        ? undefined
-        : `expected a new activity mentioning Seetha, got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args, c.result.isError ? 'ERROR' : 'ok']))}`;
-    },
+    check: calfNamed,
   },
   {
     // Live 2026-10-16: in a fresh chat the model tried to edit an activity (with an invented id) before recording.
     name: 'new chat: calf name is recorded in one go',
     messages: [`Lakshmi's new calf, born on ${D}, is named Seetha`],
-    check: (t) => {
-      if (t.claimCheck) return 'claimed a change the server refused (reply replaced)';
-      const added = call(t, 'record_farm_activity');
-      return added && /seetha/i.test(`${added.args.note ?? ''} ${added.args.animalOrField ?? ''}`)
-        ? undefined
-        : `expected a new activity mentioning Seetha, got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args, c.result.isError ? 'ERROR' : 'ok']))}`;
-    },
+    check: calfNamed,
   },
   {
     name: 'Hinglish expense',
@@ -97,7 +98,7 @@ const cases: Case[] = [
     name: 'asks when category is missing (no write)',
     messages: ['I spent 700'],
     check: (t) => {
-      const writes = t.toolCalls.filter((c) => WRITES.has(c.name));
+      const writes = t.toolCalls.filter((c) => WRITES.has(c.name) && !c.result.isError); // what was actually saved
       return writes.length > 0 ? `wrote without a category: ${writes.map((w) => JSON.stringify(w.args)).join(' ')}` : t.reply.includes('?') ? undefined : 'did not ask a question';
     },
   },
@@ -120,7 +121,14 @@ const cases: Case[] = [
         ? undefined
         : `got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args]))}`,
   },
-  { name: 'list a month', messages: ['show my expenses for January 2025'], check: (t) => expectCall(t, 'list_expenses', { from: '2025-01-01', to: '2025-01-31' }) },
+  {
+    name: 'a month (list or summary of exactly January 2025)',
+    messages: ['show my expenses for January 2025'],
+    check: (t) =>
+      ['list_expenses', 'get_expense_summary'].some((n) => t.toolCalls.some((c) => c.name === n && !c.result.isError && c.args.from === '2025-01-01' && c.args.to === '2025-01-31'))
+        ? undefined
+        : `got ${JSON.stringify(t.toolCalls.map((c) => [c.name, c.args, c.result.isError ? 'ERROR' : 'ok']))}`,
+  },
   {
     name: 'weekly insights (this week, not a guessed year)',
     messages: ['how was my week?'],
