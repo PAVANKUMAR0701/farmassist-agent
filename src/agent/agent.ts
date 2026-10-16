@@ -165,6 +165,68 @@ export function schemaProblems(schema: Record<string, unknown>, args: Record<str
   return problems;
 }
 
+/** Identifiers that must come from the farmer's own words. */
+const IDENTIFIER_FIELDS = new Set(['policyNumber', 'tagNumber']);
+
+/** What the farmer said in this conversation (their messages only: no tool results, no system notes). */
+export function farmerWords(messages: readonly ChatMessage[]): { text: string; numbers: Set<string> } {
+  const text = messages
+    .filter((m) => m.role === 'user')
+    .flatMap((m) => m.content)
+    .filter((b): b is Extract<ChatBlock, { type: 'text' }> => b.type === 'text' && !b.text.startsWith('[FarmAssist system note'))
+    .map((b) => b.text)
+    .join('\n');
+  const numbers = new Set(numbersIn(text));
+  // "1.5 lakh", "2 thousand", "5k": the amount a model sends is the multiplied value.
+  const scale: Record<string, number> = { lakh: 1e5, lakhs: 1e5, lac: 1e5, crore: 1e7, crores: 1e7, cr: 1e7, thousand: 1e3, hazaar: 1e3, hazar: 1e3, k: 1e3 };
+  for (const m of text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(lakhs?|lac|crores?|cr|thousand|hazaa?r|k)\b/gi)) {
+    numbers.add(String(Math.round(Number(m[1]!.replaceAll(',', '')) * scale[m[2]!.toLowerCase()]! * 100) / 100));
+  }
+  return { text, numbers };
+}
+
+const compact = (s: string) => s.toLowerCase().replace(/[\s\-_/.]/g, '');
+
+/**
+ * Keeps only numbers and identifiers the farmer said. An unsaid optional value is removed (so the read-back
+ * and the saved record never contain it); an unsaid required value makes the call fail with a request to ask.
+ */
+export function keepOnlySaid(
+  schema: Record<string, unknown> | undefined,
+  args: Record<string, unknown>,
+  said: { text: string; numbers: Set<string> },
+  path = '',
+): { args: Record<string, unknown>; error?: string } {
+  if (!schema) return { args };
+  const properties = (schema.properties ?? {}) as Record<string, PropertySpec>;
+  const required = new Set((schema.required ?? []) as string[]);
+  const out: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(args)) {
+    const spec = properties[field];
+    if (typeof value === 'number' && (spec?.type === 'number' || spec?.type === 'integer') && !said.numbers.has(String(value))) {
+      if (required.has(field)) return { args, error: `"${path}${field}" ${value} is not something the farmer said. Ask the farmer for it instead of guessing` };
+      continue;
+    }
+    if (IDENTIFIER_FIELDS.has(field) && typeof value === 'string' && !compact(said.text).includes(compact(value))) continue;
+    if (spec?.type === 'array' && spec.items?.type === 'object' && Array.isArray(value)) {
+      const items: unknown[] = [];
+      for (const [i, item] of value.entries()) {
+        if (!item || typeof item !== 'object') {
+          items.push(item);
+          continue;
+        }
+        const checked = keepOnlySaid(spec.items, item as Record<string, unknown>, said, `${path}${field}[${i}].`);
+        if (checked.error) return { args, error: checked.error };
+        items.push(checked.args);
+      }
+      out[field] = items;
+      continue;
+    }
+    out[field] = value;
+  }
+  return { args: out };
+}
+
 /** Values models put in optional fields instead of leaving them out. */
 const PLACEHOLDER = /^\s*(n\/?a|na|none|nil|null|unknown|unspecified|not (given|known|provided|specified|said|mentioned)|-+|\?+)\s*$/i;
 
@@ -415,9 +477,23 @@ export class FarmAgent {
         // Ids from before this response only: the model's own tool request must not vouch for its id.
         const known = knownEntryIds(messages.slice(0, -1), this.lastExpenseId);
         const schemaOf = (name: string) => tools.find((t) => t.name === name)?.inputSchema;
+        // Every number and identifier in a change must be something the farmer said (seen live: Nova invented
+        // "policy number UND001, cover ₹10,000"). Unsaid optional values are dropped; unsaid required ones refused.
+        const said = farmerWords(messages);
+        const unsaid = new Map<string, string>();
+        for (const u of uses) {
+          if (!CHANGING_TOOLS.has(u.name)) continue;
+          // "No, it was 2400" means the expense just talked about; models often leave out which one.
+          if (u.name === 'correct_entry' && u.input.entryId === undefined && u.input.match === undefined && this.lastExpenseId) {
+            u.input = { ...u.input, entryId: this.lastExpenseId };
+          }
+          const checked = keepOnlySaid(schemaOf(u.name), u.input, said);
+          u.input = checked.args;
+          if (checked.error) unsaid.set(u.id, checked.error);
+        }
         const refused = new Map(
           uses
-            .map((u) => [u.id, preflightError(u.name, u.input, known, CHANGING_TOOLS.has(u.name) ? schemaOf(u.name) : undefined)] as const)
+            .map((u) => [u.id, unsaid.get(u.id) ?? preflightError(u.name, u.input, known, CHANGING_TOOLS.has(u.name) ? schemaOf(u.name) : undefined)] as const)
             .filter((r): r is [string, string] => r[1] !== undefined),
         );
         if (refused.size > 0) {

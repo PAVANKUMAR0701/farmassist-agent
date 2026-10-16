@@ -5,7 +5,15 @@
  *
  *   AGENT_MODEL_ID=apac.amazon.nova-lite-v1:0 BEDROCK_AWS_PROFILE=M80PocBedrockKeys npm run farm-scenario [-- --runs=2]
  */
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { fromIni } from '@aws-sdk/credential-providers';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { existsSync } from 'node:fs';
 import { FarmAgent } from '../src/agent/agent.js';
+import { DynamoLedgerRepository } from '../src/repositories/dynamodb-ledger-repository.js';
+import { DynamoRecordStore } from '../src/repositories/dynamodb-record-store.js';
+import type { LedgerRepository } from '../src/repositories/ledger-repository.js';
+import type { RecordStore } from '../src/repositories/record-store.js';
 import { FarmMcpClient } from '../src/agent/mcp-client.js';
 import { createAgentModelFromEnv } from '../src/agent/model.js';
 import { handleMcpRequest } from '../src/mcp/http.js';
@@ -18,7 +26,10 @@ if (!model) {
   console.error('Set AGENT_MODEL_ID (and Bedrock credentials) to run the scenario.');
   process.exit(1);
 }
-const runs = Number(process.argv.find((a) => a.startsWith('--runs='))?.split('=')[1] ?? 1);
+/** FARMASSIST_MCP_URL set: run once against that deployed server (its farm keeps the data). */
+if (existsSync('.env.local')) process.loadEnvFile('.env.local');
+const remoteUrl = process.env.FARMASSIST_MCP_URL;
+const runs = remoteUrl ? 1 : Number(process.argv.find((a) => a.startsWith('--runs='))?.split('=')[1] ?? 1);
 const today = todayInFarmTimeZone();
 
 const SCRIPT = [
@@ -42,9 +53,10 @@ const SCRIPT = [
 ];
 
 const checks: Array<[string, (s: Snapshot) => boolean]> = [
-  ['4 cows registered, Rita renamed to Sita', (s) => sameSet(s.animals.map((a) => a.name), ['Lakshmi', 'Maya', 'Geeta', 'Sita'])],
+  ['4 cows registered, Rita renamed to Sita', (s) => ['Lakshmi', 'Maya', 'Geeta', 'Sita'].every((n) => s.animals.some((a) => a.name === n)) && !s.animals.some((a) => a.name === 'Rita')],
   ['Lakshmi is HF, born 2022-07-10', (s) => s.animals.some((a) => a.name === 'Lakshmi' && /hf/i.test(a.breed ?? '') && a.birthDate === '2022-07-10')],
-  ['Maya marked sold, the others active', (s) => s.animals.filter((a) => a.status === 'active').length === 3 && s.animals.some((a) => a.name === 'Maya' && a.status === 'sold')],
+  ['Maya marked sold, the others active', (s) => s.animals.some((a) => a.name === 'Maya' && a.status === 'sold') && ['Lakshmi', 'Geeta', 'Sita'].every((n) => s.animals.some((a) => a.name === n && a.status === 'active'))],
+  ['insurance has no invented policy number or cover', (s) => s.insurance.every((p: any) => !p.policyNumber && !p.sumInsuredPaise)],
   ['milk today: 8 + 7 + 6.5 = 21.5 L', (s) => s.milkMl === 21500],
   ['diesel expense ₹1,200 as fuel', (s) => s.expenses.some((e) => e.category === 'fuel' && e.amountPaise === 120000)],
   ['paddy: 2 acres, 50 kg seed, 30 quintal, closed', (s) => s.crops.some((c) => c.crop === 'paddy' && c.areaHundredths === 200 && c.seedGrams === 50000 && c.harvestedGrams === 3_000_000 && c.status === 'harvested')],
@@ -61,15 +73,23 @@ interface Snapshot {
   insurance: Array<{ animalName?: string; endDate: string; premiumPaise?: number }>;
   reminders: Array<{ title: string; dueDate: string }>;
 }
-const sameSet = (a: Array<string | undefined>, b: string[]) => a.length === b.length && b.every((x) => a.includes(x));
 
 let totalPassed = 0;
 for (let run = 1; run <= runs; run++) {
   const token = 'scenario-token-0123456789abcdef0123456789';
-  const ledger = new InMemoryLedgerRepository();
-  const records = new InMemoryRecordStore();
+  let ledger: LedgerRepository = new InMemoryLedgerRepository();
+  let records: RecordStore = new InMemoryRecordStore();
   const config = { allowedOrigins: [], apiTokens: [{ token, farmId: 'scenario-farm', clientId: 'scenario' }], deps: { ledger, records, now: () => new Date() } };
-  const tools = new FarmMcpClient({ url: 'http://in-process/mcp', token, fetch: (u, i) => handleMcpRequest(new Request(u, i), config) });
+  let tools = new FarmMcpClient({ url: 'http://in-process/mcp', token, fetch: (u, i) => handleMcpRequest(new Request(u, i), config) });
+  let farmId = 'scenario-farm';
+  if (remoteUrl) {
+    // The deployed MCP Lambda does the work; results are then read straight from DynamoDB, not via the tools.
+    tools = new FarmMcpClient({ url: remoteUrl, token: process.env.FARMASSIST_API_TOKEN! });
+    const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: 'ap-south-1', credentials: fromIni({ profile: process.env.AWS_PROFILE ?? 'MyPersonalAWSAccount' }) }));
+    ledger = new DynamoLedgerRepository(ddb, process.env.FARMASSIST_TABLE_NAME ?? 'farmassist-dev');
+    records = new DynamoRecordStore(ddb, process.env.FARMASSIST_TABLE_NAME ?? 'farmassist-dev');
+    farmId = process.env.FARMASSIST_DEMO_FARM_ID ?? 'demo-farm';
+  }
   const agent = new FarmAgent({ tools, model });
   console.log(`\n=== run ${run}`);
 
@@ -86,7 +106,6 @@ for (let run = 1; run <= runs; run++) {
     if (refused.length) console.log(`  [refused: ${refused.map((c) => `${c.name}: ${c.result.text.slice(0, 120)}`).join(' | ')}]`);
   }
 
-  const farmId = 'scenario-farm';
   const [animals, milk, crops, harvests, insurance, reminders, expenses] = await Promise.all([
     records.list<any>(farmId, 'animal'),
     records.list<any>(farmId, 'milk', { from: today, to: today }),

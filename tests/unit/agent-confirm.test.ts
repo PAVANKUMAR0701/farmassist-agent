@@ -348,3 +348,41 @@ describe('arguments are cleaned and checked before a read-back (live, 2026-10-16
     expect(schemaProblems(schema, { animals: [{ type: 'cow' }, { type: 'dragon' }] })).toEqual(['"animals[1].type" must be one of "cow", "calf"']);
   });
 });
+
+describe('only what the farmer said is saved (live, 2026-10-17: Nova invented "policy UND001, cover ₹10,000")', () => {
+  const insuranceSchema = {
+    type: 'object',
+    required: ['insurer', 'endDate'],
+    properties: { insurer: { type: 'string' }, endDate: { type: 'string' }, policyNumber: { type: 'string' }, premiumRupees: { type: 'number' }, sumInsuredRupees: { type: 'number' } },
+  };
+  const said = (text: string) => ({ text, numbers: new Set((text.match(/\d+(\.\d+)?/g) ?? []).map((n) => String(Number(n)))) });
+
+  it('drops an invented policy number and cover, keeps the premium that was said', async () => {
+    const { keepOnlySaid } = await import('../../src/agent/agent.js');
+    const result = keepOnlySaid(
+      insuranceSchema,
+      { insurer: 'United India', endDate: '2026-11-05', policyNumber: 'UND001', premiumRupees: 1850, sumInsuredRupees: 10000 },
+      said('Lakshmi is insured with United India until 2026-11-05, premium 1850 rupees'),
+    );
+    expect(result).toEqual({ args: { insurer: 'United India', endDate: '2026-11-05', premiumRupees: 1850 } });
+  });
+
+  it('refuses an invented required amount and asks for it; understands lakh and thousand', async () => {
+    const { keepOnlySaid, farmerWords } = await import('../../src/agent/agent.js');
+    const schema = { type: 'object', required: ['amountRupees'], properties: { amountRupees: { type: 'number' } } };
+    expect(keepOnlySaid(schema, { amountRupees: 900 }, said('spent on feed')).error).toContain('Ask the farmer');
+    const words = farmerWords([{ role: 'user', content: [{ type: 'text', text: 'paid 1.5 lakh for the tractor and 2 thousand for diesel' }] }]);
+    expect(keepOnlySaid(schema, { amountRupees: 150000 }, words).error).toBeUndefined();
+    expect(keepOnlySaid(schema, { amountRupees: 2000 }, words).error).toBeUndefined();
+  });
+
+  it('ignores FarmAssist system notes and tool results when deciding what the farmer said', async () => {
+    const { farmerWords } = await import('../../src/agent/agent.js');
+    const words = farmerWords([
+      { role: 'user', content: [{ type: 'text', text: 'Lakshmi gave milk' }] },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'x', text: 'Recorded 12 L', isError: false }] },
+      { role: 'user', content: [{ type: 'text', text: '[FarmAssist system note, not from the farmer] 99' }] },
+    ]);
+    expect([...words.numbers]).toEqual([]);
+  });
+});

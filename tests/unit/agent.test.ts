@@ -305,3 +305,17 @@ describe('a save claimed without any tool call (live with Nova Lite, 2026-10-16)
     expect(await expensesToday()).toHaveLength(0);
   });
 });
+
+it('a correction that names no expense goes to the last expense of the conversation (eval: Nova left out entryId)', async () => {
+  const model = new ScriptedModel([
+    use('record_expense', { amountRupees: 2500, category: 'feed' }),
+    say('Recorded ₹2,500.00 on feed.'),
+    use('correct_entry', { newAmountRupees: 2400 }),
+    say('Corrected to ₹2,400.00.'),
+  ]);
+  const { agent, expensesToday } = setup(model);
+  await agent.handle('spent 2500 on feed');
+  const turn = await agent.handle('no, it was 2400');
+  expect(turn.toolCalls[0]).toMatchObject({ name: 'correct_entry', result: { isError: false } });
+  expect(await expensesToday()).toMatchObject([{ amountPaise: 240000 }]);
+});
