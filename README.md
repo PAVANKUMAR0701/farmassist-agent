@@ -2,138 +2,163 @@
 
 > Talk to your farm ledger — every number verified, never guessed.
 
-FarmAssist Agent is a voice-friendly farm ledger for small dairy and crop farmers in India. It is a **self-hosted MCP server** (Model Context Protocol, spec 2025-11-25, Streamable HTTP) for AWS Lambda and DynamoDB, with Amazon Bedrock planned for insights.
+FarmAssist is a voice-first farm assistant for small dairy and crop farmers in India. A farmer says *"spent 2500 on cattle feed"*, *"Lakshmi gave 8 litres this morning"*, *"harvested 30 quintal of paddy from the north field"* or *"no, it was 2400"*, and FarmAssist keeps the records: expenses, activities, the herd, milk, crops, insurance and reminders. It answers questions from those records, and it can look at a photo of a sick animal or a crop problem.
 
-**Status: in progress.** All tools below work locally and are covered by tests, including `weekly_insights` and its number guard, which run against a mocked Bedrock. The backend is **deployed to AWS** (stack `farmassist-dev`, ap-south-1) and passes the full smoke test against the live endpoint ([recorded result](docs/protocol-tests.md#recorded-result-deployed-to-aws-2026-10-16)). It runs without any LLM: Bedrock is not switched on yet, so `weekly_insights` uses its template text. **No real Bedrock call has been tested yet.** The MCP client/agent works against the deployed backend, with Amazon Nova Lite or without any model. The web client is still to come. Progress is tracked in [docs/progress.md](docs/progress.md).
+It is built as a **self-hosted MCP server** (Model Context Protocol 2025-11-25, Streamable HTTP) on AWS Lambda and DynamoDB, with an MCP client/agent driven by **Amazon Nova Lite** on Amazon Bedrock, and a mobile-first web app with voice.
 
-## Tools
+**The rule that shapes everything: the model never decides a fact.** Totals, counts, ages, yields and dates are calculated by server code. Every number a model writes is checked against tool results. Every change is checked before it is saved. Nothing depends on the model being right.
 
-| Tool | What it does |
+## What it does
+
+| Area | Examples | Tools |
+|---|---|---|
+| Expenses | "Spent 1200 on diesel", "how much on feed this month?", "no, it was 900" | `record_expense`, `list_expenses`, `get_expense_summary`, `correct_entry` (with an audit trail) |
+| Activities | "Vaccinated the brown cow" | `record_farm_activity`, `list_activities`, `get_daily_summary` |
+| Herd | "I have 4 cows: Lakshmi, Maya, Geeta and Rita", "rename Rita to Sita", "Maya was sold" | `register_animal`, `update_animal`, `list_animals` |
+| Milk | "Lakshmi gave 8 litres in the morning", "how much milk this week?" | `record_milk`, `get_milk_summary` |
+| Crops | "Planted paddy in the north field, 2 acres, 50 kg seed", "harvested 30 quintal" | `record_sowing`, `record_harvest`, `list_crops` (yield per acre, harvest vs seed) |
+| Insurance and reminders | "Lakshmi is insured with United India until 5 November", "remind me to deworm the calves" | `add_insurance`, `add_reminder`, `complete_reminder`, `list_reminders` |
+| Weekly insights | "How was my week?" | `weekly_insights` (Nova Lite wording, checked by two guards) |
+| Photo help | 📷 a cow with lumps on the skin, or spotted paddy leaves | chat backend: Nova Lite vision plus curated reference notes |
+
+Money is stored in whole paise, milk in millilitres and mass in grams, so totals are exact. "Today" is India time. The farm comes only from the signed-in identity, never from the model.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Phone["Farmer's phone"]
+    W["Web app<br/>chat · voice · photos<br/>Today · Expenses · Farm · Activities"]
+  end
+  subgraph AWS["AWS account (ap-south-1)"]
+    C["Chat Lambda<br/>web client + agent (MCP client)<br/>Cognito check · read-backs · guards"]
+    M["MCP Lambda<br/>21 validated tools<br/>bearer token → farm"]
+    D[("DynamoDB<br/>ledger, herd, milk, crops,<br/>reminders, conversations")]
+    S[("S3 photos<br/>private · 90-day expiry")]
+    G["Cognito<br/>sign-in"]
+    P["SSM<br/>MCP token"]
+  end
+  subgraph BR["Bedrock account"]
+    N["Amazon Nova Lite<br/>tool use · vision · wording"]
+    E["Nova Multimodal<br/>Embeddings (optional)"]
+  end
+  W -- "HTTPS + Cognito ID token" --> C
+  W -- sign-in --> G
+  C -- "MCP (Streamable HTTP)" --> M
+  M --> D
+  C --> D
+  C --> S
+  C -. "cross-account role" .-> N
+  M -. "cross-account role" .-> N
+  C -. optional .-> E
+  C --> P
+  M --> P
+```
+
+- **Two Lambdas, one table, one bucket**, all pay-per-request. The MCP server holds the business rules; the chat Lambda is an MCP client like any other.
+- **The browser holds only its own Cognito token**: no AWS keys and no MCP token.
+- **Bedrock is in a separate account**, reached through a role that trusts only the two Lambda roles. If Bedrock is unavailable, everything still works: a deterministic parser handles the core commands ("basic mode") and insights use template text.
+
+## How the agent stays honest
+
+These are all deterministic code, and each was added after a failure seen in testing ([docs/model-evaluation.md](docs/model-evaluation.md)):
+
+- **Number check on replies.** A reply containing an amount not found in this turn's tool results (or the farmer's words) is replaced with the server's own text.
+- **Claim check.** "Recorded…" / "has been updated" with nothing actually saved is never shown. The model gets one chance to call the tool; otherwise the farmer sees "Nothing was saved."
+- **Only what the farmer said.** Every number and identifier in a change must appear in what the farmer said (lakh, thousand and k are understood). Live, Nova invented a policy number and a cover amount; those are now dropped.
+- **Pre-checks before anything is asked or saved.** Arguments are checked against the tool's own JSON Schema. Placeholders ("N/A", ₹0) are removed. Ids must have come from this conversation (models invent ids), and retry ids are managed by the agent, not the model.
+- **Voice read-back.** Speech can be misheard, so a spoken change is read back exactly as it will be saved ("Shall I register 4 cows: Lakshmi (HF, born 2022-07-10), Maya, Geeta and Rita?"). It is saved only after "yes", "haan" or "aama", or a tap. The question is built by code from the tool arguments.
+- **Weekly insights: two guards.** The number guard checks every figure exists in the calculated facts. The meaning guard checks each amount or percentage is attached to the right category, and that claims about last week match.
+- **Photo help: the model describes, the notes advise.** Nova Lite reports only what it sees. The answer is assembled from curated notes, says "not a diagnosis", and escalates urgent signs and reportable diseases to the veterinarian.
+- **Server rules.** Duplicate-safe retries (also under concurrent requests), optimistic locking with an audit trail for corrections, names that never get guessed (an unknown name lists the options), and "other" expenses that need a note.
+
+## Status
+
+| Part | State |
 |---|---|
-| `record_expense` | Saves an expense (amount stored as whole paise). Retries with the same `clientRequestId` never create a duplicate. |
-| `list_expenses` | Pages through expenses for a period, newest first. |
-| `get_expense_summary` | Verified totals for a period, by category or by day. |
-| `record_farm_activity` | Logs milking, vaccination, sowing, harvesting, irrigation, etc., per animal or field. |
-| `correct_entry` | Fixes an expense ("no, it was ₹900") and keeps an audit record of the old value. |
-| `get_daily_summary` | Everything recorded on one day: expense total, spending by category, all expenses and activities. |
-| `weekly_insights` | Plain-language explanation of the last 7 days, written by Amazon Bedrock from figures calculated in code. Every number is checked by the [verified-number guard](docs/number-guard.md). |
-| `list_activities` | Lists farm activities for a period, newest first. |
-| `register_animal` / `update_animal` / `list_animals` | Herd register: add animals (several in one call), rename, set breed, tag, mother or birth date, mark sold or died. Counts and ages are worked out by code. |
-| `record_milk` / `get_milk_summary` | Milk per animal or for the herd, morning or evening, stored as whole millilitres. Totals and the average per day come from code. |
-| `record_sowing` / `record_harvest` / `list_crops` | Crop cycles (paddy, ragi, sugarcane, ...): field, acres, seed, harvests in kg, quintal or tonne, yield per acre and harvest-to-seed ratio. |
-| `add_insurance` / `add_reminder` / `complete_reminder` / `list_reminders` | Animal insurance and reminders. Policy end dates show up as reminders 30 days ahead. |
-| `health_check` | Confirms the server is reachable. |
+| MCP server, 21 tools, DynamoDB, auth | Deployed; smoke 19/19; concurrency and pagination verified on the real table |
+| Agent with Nova Lite (cross-account role) | Deployed. Evaluation 12/13 per run; the 17-message farm scenario stores 10/10 checks correctly, in memory and on the live stack |
+| Web client (sign-in, Chat, Today, Expenses, Farm, Activities) | Deployed; used on a phone |
+| Voice (English, Hindi, Tamil) with read-back | Deployed; tested on a phone with a real microphone |
+| Photo help | Deployed; tested with generated pictures and the full UI path. **Diagnostic accuracy not measured** (needs labelled farm photos) |
+| Weekly insights wording by Nova Lite | Code deployed and evaluated (15/15 after one retry). **Live use needs one trust-policy change** in the Bedrock account; until then the guarded template is used |
+| Nova Multimodal Embeddings for retrieval | Interface, index builder and hybrid retriever built; keyword retrieval is used. **Needs model access** in the Bedrock account (us-east-1) |
+| Alexa+ | **Not connected**: the Alexa+ developer tools are partner-only. FarmAssist is shown through its own web client. See [FRICTION.md](FRICTION.md) |
 
-All totals are added up by server code, and "today" or "this month" is worked out on the server in India time. The farm ID comes only from the bearer token. See [docs/data-model.md](docs/data-model.md).
+Full history and evidence: [docs/progress.md](docs/progress.md).
 
 ## Run it locally
 
-Requires Node.js 22 (22.19 or newer recommended, because MCP Inspector needs it).
+Node.js 22 (22.19+ recommended).
 
 ```bash
 npm ci
-cp .env.example .env.local   # then set FARMASSIST_API_TOKEN
-npm test                     # unit, protocol and Lambda handler tests
-npm run start:local          # serves http://127.0.0.1:3000/mcp (in-memory storage)
-```
-
-In a second terminal:
-
-```bash
-npm run smoke -- http://127.0.0.1:3000/mcp
-```
-
-See [docs/protocol-tests.md](docs/protocol-tests.md) for what the smoke test checks and recorded results.
-
-## Talk to it through the agent
-
-`src/agent/` is the MCP client side. It connects to the server with the official MCP SDK client, discovers the tools, and turns a farmer's message into tool calls:
-
-- **With a model** (`AGENT_MODEL_ID`, any Bedrock model that supports tool use through the Converse API, such as Amazon Nova Lite): the usual tool-use loop. The agent adds a `clientRequestId` to every write, so retries never double-record. A reply that contains a number not found in the tool results is replaced with the server's own text.
-- **Without a model, or when the model fails:** a deterministic parser handles the core commands ("spent 2500 on feed", "no, it was 900", "vaccinated the brown cow", "how much on feed this month", "today's summary", "weekly insights"). It asks a question instead of guessing.
-
-```bash
-FARMASSIST_MCP_URL=https://<id>.lambda-url.ap-south-1.on.aws/mcp npm run agent -- "spent 2500 on feed" "no, it was 900"
-```
-
-**Amazon Nova Lite** is the chosen model (32 of 33 evaluation turns correct, median 1.5 s; Nova Micro scored 8/33). See [docs/model-evaluation.md](docs/model-evaluation.md) and, for account setup, [docs/bedrock-access.md](docs/bedrock-access.md).
-
-## Web client
-
-A mobile-first web app (`web/`, plain TypeScript, no framework, about 13 KiB) with sign-in, **Chat**, **Today** (dashboard), **Expenses** and **Activities**. It is served by the chat Lambda (`src/chat/`), which also hosts the agent. The page and the API share one origin, so no CORS is needed and no extra hosting service is involved.
-
-- **Sign-in** uses Amazon Cognito. Accounts are created by an admin, and each has a `custom:farmId` the user cannot change. The backend takes the farm only from the verified ID token.
-- **The browser never holds AWS credentials or the MCP token.** The chat backend checks the Cognito token, then acts as an MCP client to the MCP server.
-- **Screens show only server-calculated amounts.** They call read-only MCP tools through `/api/read`. Writes go only through the agent.
-- **Without a model** (or when Bedrock fails) the chat works in "basic mode" through the deterministic parser.
-
-**Voice.** Tap 🎤 and speak in English (India), Hindi or Tamil. This uses the browser's built-in Web Speech API, with no extra service: speech input works in Chrome (Android and desktop), Edge and Safari, and elsewhere the mic is hidden and typing works. Replies are read aloud ("₹2,500.00" is spoken as "2,500 rupees"). Because speech can be misheard, **a spoken change is never saved straight away.** The app reads back exactly what it will save ("Shall I record ₹2,500.00 on feed for today?"), then listens for "yes"/"haan"/"aama" or a tap on **Yes, save**. The read-back is built by code from the exact tool arguments, not written by the model. If the microphone is blocked, missing or hears nothing, the app says so and typing still works.
-
-Run it locally (local dev sign-in, in-memory data, bound to 127.0.0.1 only):
-
-```bash
+cp .env.example .env.local      # set FARMASSIST_API_TOKEN (32+ characters)
+npm test                        # 365 tests
 npm run build:web
-npm run start:chat   # http://127.0.0.1:5173
+npm run start:chat -- --seed    # web app on http://127.0.0.1:5173 with a sample farm (in memory, dev sign-in)
 ```
 
-**Create a sign-in user** after deploying (`UserPoolId` is a stack output). Pick your own temporary password; the app asks for a new one at first sign-in:
-
-```bash
-aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <username> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=demo-farm --temporary-password "<temporary password, 8+ chars with a number>" --message-action SUPPRESS
-```
+To chat through Nova Lite locally, set `AGENT_MODEL_ID=apac.amazon.nova-lite-v1:0` and `BEDROCK_AWS_PROFILE=<profile for the Bedrock account>` before `start:chat`. The MCP server alone: `npm run start:local` (http://127.0.0.1:3000/mcp), then `npm run smoke -- http://127.0.0.1:3000/mcp`.
 
 ## Deploy to AWS
 
-What gets created ([template.yaml](template.yaml)):
-- **MCP Lambda** (Node.js 22, arm64) with a public **Function URL**. Access is controlled by the bearer token, which is checked in code.
-- **Chat Lambda** with its own Function URL. It serves the web client and the agent API, and checks Cognito ID tokens in code.
-- **Cognito user pool** for web sign-in (admin-created users only).
-- **DynamoDB** table, on-demand, with TTL, point-in-time recovery and encryption.
-- **CloudWatch** log group with 14-day retention. Each request writes one JSON log line with its method, status and latency (never the request body).
+You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) and credentials for the target account. All steps are idempotent.
 
-You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) and working AWS credentials.
-
-1. Store the bearer token as an SSM SecureString. CloudFormation cannot create SecureStrings, so this is a separate step. Use the same token as your `.env.local` or generate a new one:
+1. **Token.** CloudFormation cannot create SecureStrings, so create it once:
 
    ```bash
    aws ssm put-parameter --region ap-south-1 --name /farmassist/dev/api-token --type SecureString --value "<token of 32+ characters>"
    ```
 
-2. Build and deploy (`npm run build:web` first, because the chat Lambda bundles the web client):
+2. **Build and deploy.** If `sam build` cannot find esbuild, put `node_modules/.bin` on the PATH first; in PowerShell: `$env:PATH = "$PWD\node_modules\.bin;$env:PATH"`.
 
    ```bash
-   npm run build:web
-   sam build
-   sam deploy --guided --region ap-south-1
+   npm ci && npm run build:web && sam build
+   sam deploy --stack-name farmassist-dev --region ap-south-1 --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset --parameter-overrides AgentModelId=apac.amazon.nova-lite-v1:0 AgentBedrockRoleArn=<role ARN> BedrockModelId=apac.amazon.nova-lite-v1:0 BedrockRoleArn=<role ARN>
    ```
 
-   Accept the defaults or set `AllowedOrigins` to your web client's origin. `samconfig.toml` is git-ignored.
+   Without the Bedrock parameters, everything still deploys and runs in basic mode. Creating the Bedrock role is covered in [docs/bedrock-access.md](docs/bedrock-access.md).
 
-   If `sam build` fails with "Cannot find esbuild", put the project's own esbuild on the PATH for that shell first. In PowerShell: `$env:PATH = "$PWD\node_modules\.bin;$env:PATH"`.
-
-   Non-interactive equivalent of the guided deploy:
+3. **Sign-in user.** `UserPoolId` is a stack output. Choose your own temporary password; it is replaced at first sign-in:
 
    ```bash
-   sam deploy --stack-name farmassist-dev --region ap-south-1 --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+   aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <name> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=demo-farm --temporary-password "<temporary password>" --message-action SUPPRESS
    ```
 
-3. Run the smoke test against the `McpEndpoint` output:
+4. **Check it.** Open the `WebAppUrl` output, and run the checks below against the `McpEndpoint` output.
 
-   ```bash
-   npm run smoke -- https://<id>.lambda-url.ap-south-1.on.aws/mcp
-   ```
+## Tests and evaluations
 
-   `npm run live-hardening -- <same URL>` also checks simultaneous retries, simultaneous corrections and pagination against the real table (needs AWS credentials that can read it). See [docs/protocol-tests.md](docs/protocol-tests.md).
+| Command | What it checks |
+|---|---|
+| `npm test` | 365 unit, protocol, Lambda and API tests (mocked AWS) |
+| `npm run smoke -- <McpEndpoint>` | 19 protocol and tool checks against a running server |
+| `npm run live-hardening -- <McpEndpoint>` | Simultaneous retries and corrections, and pagination, on the real table |
+| `npm run agent-eval -- --runs=2 <modelId>` | 13 conversation cases scored on tool choice, arguments, writes and reply style |
+| `npm run farm-scenario` | 17-message voice conversation, then checks the stored records (`FARMASSIST_MCP_URL` runs it against a deployed stack and reads DynamoDB directly) |
+| `npm run narration-eval -- --runs=3 <modelId>` | Weekly-insight wording on 5 weeks, through both guards |
+| `npm run retrieval-eval` | Reference-note retrieval on 24 labelled descriptions |
 
-**Bedrock (optional):** set `BedrockModelId` (for example `in.anthropic.claude-haiku-4-5-20251001-v1:0`) to turn on Bedrock narration in `weekly_insights`. Leave it empty and the tool uses template text built from the same verified figures. If Bedrock runs in a different AWS account, also set `BedrockRoleArn`. The function then has permission only to assume that one role, and that role must trust the `FunctionRoleArn` stack output. For local runs, set `BEDROCK_MODEL_ID` and optionally `BEDROCK_AWS_PROFILE` in `.env.local` (see `.env.example`).
+## Cost
 
-**Cost guards:** everything is pay-per-request. Set `ReservedConcurrency` (for example 5) to cap concurrent executions, but only if your account's concurrency limit is above 10. New accounts often have exactly 10, which leaves nothing to reserve.
+Measured: the application account has cost **$0.000065 so far this month** (Lambda, DynamoDB, S3, Cognito, SSM and logs are all within the free tier at demo scale). Bedrock is billed to the Bedrock account. Nova Lite is priced per token; a chat turn sends the tool list (about 3,000 to 6,000 tokens), so a turn costs a small fraction of a US cent, and a photo is similar. Check the current [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/). Guards in place: pay-per-request everything, $1 monthly and zero-spend budgets on the account, 14-day log retention, 90-day photo expiry, and an optional `ReservedConcurrency` cap.
 
-**Teardown:** `sam delete` removes the function and logs. The DynamoDB table is kept on purpose (`DeletionPolicy: Retain`), so farm data can't be lost by accident. Delete it yourself once you no longer need it.
+## Teardown
 
-## About Alexa+
+```bash
+sam delete --stack-name farmassist-dev --region ap-south-1
+```
 
-This project targets the Alexa+ track of the *Build, Ship, Shape* hackathon. Amazon's Alexa+ add-on tools (CLI, MCP Toolkit, Web Simulator) are partner-only, so this project is **not** connected to a real Alexa+ device or console. It is shown through its own web-based MCP client instead. See [FRICTION.md](FRICTION.md).
+Kept on purpose, so farm data cannot be lost by accident: the DynamoDB table `farmassist-dev`, the photo bucket (empty it, then delete it), and the SSM parameter. Delete them by hand when you no longer need them. In the Bedrock account, delete the role used for FarmAssist.
+
+## Documentation
+
+- [docs/progress.md](docs/progress.md): every step, what was checked, what is still open
+- [docs/model-evaluation.md](docs/model-evaluation.md): Nova Lite vs Micro, and each agent fix with the failure that caused it
+- [docs/bedrock-access.md](docs/bedrock-access.md): accounts, model access and the cross-account role
+- [docs/demo-script.md](docs/demo-script.md): a three-minute demo
+- [docs/data-model.md](docs/data-model.md), [docs/number-guard.md](docs/number-guard.md), [docs/protocol-tests.md](docs/protocol-tests.md), [FRICTION.md](FRICTION.md)
 
 ## License
 

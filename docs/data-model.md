@@ -43,3 +43,19 @@ Without an `entryId`, the tool only acts when exactly one expense matches the da
 ## Tenant isolation
 
 The `farmId` comes **only** from the authenticated bearer token (`src/auth/bearer.ts`), never from tool arguments. Pagination cursors include the farm id and query filters and are rejected if replayed by another farm or with different filters.
+
+## Farm records beyond money (added 2026-10-16)
+
+Herd, milk, crops, harvests, insurance and reminders use one generic, farm-scoped record store (`src/repositories/record-store.ts`) in the same table. Ids are typed and validated; a model-supplied id that does not parse is treated as unknown.
+
+| Kind | Id | Sort key | Stored values |
+|---|---|---|---|
+| Animal | `ani_<ulid>` | `ANIMAL#<ulid>` | name, type, breed, sex, tag, birth date, mother, status (active, sold, died) |
+| Milk | `milk_<yyyymmdd>_<ulid>` | `MILK#<date>#<ulid>` | millilitres (integer), session, animal |
+| Crop cycle | `crop_<ulid>` | `CROP#<ulid>` | crop, variety, field, hundredths of an acre, sown date, seed grams, status |
+| Harvest | `hrv_<cropUlid>_<ulid>` | `HARVEST#<cropUlid>#<ulid>` | grams (integer), date |
+| Insurance | `ins_<ulid>` | `INSURANCE#<ulid>` | animal, insurer, policy number, start and end dates, premium and cover in paise |
+| Reminder | `rem_<yyyymmdd>_<ulid>` | `REMINDER#<date>#<ulid>` | title, due date, animal, status (open, done) |
+| Conversation | — | `CONV#<userId>#<conversationId>` | agent state, 24 h TTL (chat Lambda only) |
+
+Every record carries `version` for optimistic locking. Creates use the same `IDEM#<clientRequestId>` transaction as expenses, so retries never duplicate. Dated kinds (milk, reminders) are read with a sort-key range, and harvests by crop.
