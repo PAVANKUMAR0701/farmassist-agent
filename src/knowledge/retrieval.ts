@@ -135,7 +135,15 @@ export class HybridRetriever implements Retriever {
   }
 
   async search(query: RetrievalQuery, k = 3): Promise<RetrievedNote[]> {
-    const lists = await Promise.all(this.parts.map((p) => p.search(query, 10).catch(() => [] as RetrievedNote[])));
+    const lists = await Promise.all(
+      this.parts.map((p) =>
+        p.search(query, 10).catch((error: unknown) => {
+          // One part failing (say, the embeddings call) leaves the others; log it so it is not silently keyword-only.
+          console.error(JSON.stringify({ level: 'error', message: 'Retriever failed', retriever: p.name, error: error instanceof Error ? error.name : 'Unknown' }));
+          return [] as RetrievedNote[];
+        }),
+      ),
+    );
     const fused = new Map<string, RetrievedNote>();
     for (const list of lists) {
       list.forEach((r, rank) => {

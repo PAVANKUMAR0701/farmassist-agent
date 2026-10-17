@@ -162,6 +162,11 @@ export function forTheSameCropOrAnimal<T extends { note: ReferenceNote }>(matche
   return kept.length ? kept : matches;
 }
 
+/** MIN_MATCH_SCORE is on the BM25 scale; fused (hybrid) scores are tiny by design, so it only applies to keyword search. */
+function usesKeywordScores(retriever: Retriever): boolean {
+  return retriever.name.startsWith('keyword');
+}
+
 /** Observe, retrieve, answer. If the vision model fails, the farmer's own words still find notes. */
 export async function photoHelp(deps: { vision?: VisionModel | undefined; retriever: Retriever }, photo: Photo, farmerNote?: string, subjectHint?: 'crop' | 'animal'): Promise<PhotoAnswer> {
   let observation: Observation | undefined;
@@ -173,7 +178,9 @@ export async function photoHelp(deps: { vision?: VisionModel | undefined; retrie
   if (!observation && farmerNote) {
     // No usable model answer: fall back to what the farmer wrote, and say the photo was not read.
     const matches = await deps.retriever.search({ text: farmerNote, ...(subjectHint ? { subject: subjectHint } : {}) }, 2);
-    const answer = composeAnswer({ subject: subjectHint ?? 'crop', what: '', visibleSigns: [], urgentSigns: [], photoQuality: 'good', confidence: 'low' }, matches, { keywordScores: true });
+    const answer = composeAnswer({ subject: subjectHint ?? 'crop', what: '', visibleSigns: [], urgentSigns: [], photoQuality: 'good', confidence: 'low' }, matches, {
+      keywordScores: usesKeywordScores(deps.retriever),
+    });
     return { ...answer, reply: `I could not look at the photo right now, so this is based only on what you wrote. ${answer.reply}` };
   }
   if (!observation || observation.subject === 'unclear' || observation.subject === 'other') return composeAnswer(observation, []);
@@ -181,6 +188,6 @@ export async function photoHelp(deps: { vision?: VisionModel | undefined; retrie
   const query = [farmerNote, observation.what, ...observation.visibleSigns].filter(Boolean).join('. ');
   const found = await deps.retriever.search({ text: query, image: photo, ...(subject ? { subject } : {}) }, 4);
   return composeAnswer(observation, forTheSameCropOrAnimal(found, `${farmerNote ?? ''} ${observation.what}`).slice(0, 2), {
-    keywordScores: deps.retriever.name.startsWith('keyword'),
+    keywordScores: usesKeywordScores(deps.retriever),
   });
 }

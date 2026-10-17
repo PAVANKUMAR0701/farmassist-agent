@@ -84,20 +84,30 @@ Asked for during phone testing ("add herds and name them, edit them, crops like 
 - Tests: 329 in 25 files.
 - **Demo data to clean before recording:** test entries on the demo farm (smoke-test expenses and vaccinations, evaluation entries dated January 2025 and today, a "Seetha" calf from the evaluation, and a "Smoke Test Cow" marked died).
 
-## Step 6: Weekly insights on the chosen model — built and deployed; live wording waits on one trust-policy change (2026-10-17)
+## Step 6: Weekly insights on the chosen model — done, live (2026-10-18)
 
 - `npm run narration-eval` runs the tool's own retry loop and guards on 5 realistic weeks. Both Nova models passed the number guard 10/10, yet some drafts attached real numbers to the wrong things ("₹85,450 on equipment" when that was the week's total, "Labour and seeds together cost ₹1,200", "feed was 125% higher", "no earlier week" when there was one).
 - **Meaning guard** (`src/domain/meaning-guard.ts`): an amount next to a category must be that category's total, a percentage next to a category must be its share, and claims about last week and "too few records" must match the facts. A failing draft gets one retry with the reason, then the template. Two false positives found in the evaluation ("₹2,500 on feed and ₹800 on medicine") were fixed and added as tests.
 - Result over 3 runs: **Nova Lite 15/15 after one retry** (13/15 first try), so Nova Lite does the wording too; Micro made more mistakes the guards had to catch.
-- Deployed with `BedrockModelId=apac.amazon.nova-lite-v1:0` and `BedrockRoleArn=…Pavan_BedRock_MCP_Role`. **Waiting on:** the role's trust policy must also allow the MCP function's role (see bedrock-access.md). Until then `weekly_insights` reports `bedrock_unavailable` and uses the guarded template; once the trust is added it switches to Nova Lite with no redeploy.
+- Deployed with `BedrockModelId=apac.amazon.nova-lite-v1:0` and `BedrockRoleArn=…Pavan_BedRock_MCP_Role`. After the role's trust policy was extended to the MCP function's role (2026-10-18), `weekly_insights` on the deployed server returned `source: bedrock` with the guard passing (on attempt 2 for the current week, attempt 1 for the week ending 2025-01-24). If Bedrock fails it still falls back to the guarded template.
 
-## Step 7: Multimodal retrieval — built; embeddings wait on model access (2026-10-17)
+## Step 7: Multimodal retrieval — done, embeddings live (2026-10-18)
 
 - `src/knowledge/corpus.ts`: 13 curated notes on crop and cattle problems common in India (paddy blast, brown spot, bacterial blight, stem borer, ragi blast, sugarcane red rot, nitrogen deficiency, FMD, lumpy skin disease, mastitis, ticks, bloat, heat stress). Each has visible signs, safe first steps, when to call a professional, and the official source to read. FMD and LSD are marked as diseases that must be reported. Written for FarmAssist in plain words; no copied text, and no reference images (those would need properly licensed photos).
 - `src/knowledge/retrieval.ts`: a `Retriever` interface with a BM25 keyword retriever (needs no model), an in-memory vector retriever and a reciprocal-rank hybrid. No vector database: a few dozen notes fit in memory.
-- `src/knowledge/nova-embedder.ts`: Amazon Nova Multimodal Embeddings (`amazon.nova-2-multimodal-embeddings-v1:0`, **us-east-1 only**), text and image in one space. `npm run build-knowledge-index` writes the vectors once (13 calls, a fraction of a cent). The deployed switch `KnowledgeEmbeddings=nova` is off.
+- `src/knowledge/nova-embedder.ts`: Amazon Nova Multimodal Embeddings (`amazon.nova-2-multimodal-embeddings-v1:0`, **us-east-1 only**), text and image in one space. `npm run build-knowledge-index` writes the vectors once (13 calls, a fraction of a cent). The index (13 vectors, 1024 dimensions) is built and committed, and the deployed stack runs with `KnowledgeEmbeddings=nova`.
 - `npm run retrieval-eval` (24 labelled farmer descriptions): **keyword hit@1 23/24, hit@3 24/24**. Honest caveat: the same author wrote the notes and the queries, so this is optimistic. Real farmer descriptions and photos are the true test.
-- **Waiting on:** the Bedrock account must allow the embeddings model (a live call returned AccessDenied). Photo help works without it.
+- A harder set of 18 queries uses different words from the notes, plus Hindi/Hinglish and Tamil written in English letters (2026-10-18):
+
+  | Retriever | Same wording (24): hit@1 / hit@3 | Different wording (18): hit@1 / hit@3 |
+  |---|---|---|
+  | keyword (BM25) | 23 / 24 | 10 / 13 (finds nothing for any Hindi or Tamil query) |
+  | vector (Nova embeddings) | 23 / 24 | 15 / 17 |
+  | hybrid (both, fused by rank) | 23 / 24 | **16 / 17** |
+
+  Embeddings add nothing when the farmer uses the notes' words, and a lot when they don't, so the hybrid is switched on. The remaining miss is a Tamil query ("maattukku udambu muzhuvathum kattigal", lumps all over the cow's body).
+- Embeddings stay optional: if the embeddings call fails, hybrid search logs `Retriever failed` and keyword results still answer. The keyword relevance cut-off (`MIN_MATCH_SCORE`) applies only to keyword scores; a bug where the vision-failure path applied it to fused scores (which would have dropped every note) was fixed with a test.
+- Not yet measured: image queries (the photo is embedded alongside the text; the notes are text only).
 
 ## Step 8: Crop and cattle photo help — done (2026-10-17)
 

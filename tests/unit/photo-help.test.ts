@@ -4,7 +4,7 @@ import { handleChatRequest, type ChatAppDeps } from '../../src/chat/app.js';
 import { InMemoryConversationStore } from '../../src/chat/conversations.js';
 import { InMemoryPhotoStore, looksLike, type PhotoStore } from '../../src/chat/photos.js';
 import { REFERENCE_NOTES } from '../../src/knowledge/corpus.js';
-import { KeywordRetriever } from '../../src/knowledge/retrieval.js';
+import { HybridRetriever, KeywordRetriever } from '../../src/knowledge/retrieval.js';
 
 const note = (id: string) => REFERENCE_NOTES.find((n) => n.id === id)!;
 const seen = (o: Partial<Observation>): Observation => ({ subject: 'crop', what: 'paddy leaves', visibleSigns: [], urgentSigns: [], photoQuality: 'good', confidence: 'medium', ...o });
@@ -76,6 +76,11 @@ describe('photoHelp', () => {
     expect(answer.reply).toMatch(/^I could not look at the photo right now/);
     expect(answer.matches[0]!.id).toBe('cattle-fmd');
     expect(answer.notifiable).toBe(true);
+  });
+
+  it('with hybrid search on, the vision-failure path still keeps notes (fused scores are not on the keyword scale)', async () => {
+    const answer = await photoHelp({ vision: fakeVision(new Error('ThrottlingException')), retriever: new HybridRetriever([new KeywordRetriever()]) }, { bytes: JPEG, format: 'jpeg' }, 'blisters between the hooves and drooling', 'animal');
+    expect(answer.matches[0]!.id).toBe('cattle-fmd');
   });
 });
 

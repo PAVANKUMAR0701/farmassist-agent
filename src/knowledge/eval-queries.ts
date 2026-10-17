@@ -25,3 +25,28 @@ export const RETRIEVAL_QUERIES: Array<{ text: string; subject: 'crop' | 'animal'
   { text: 'cows panting with open mouth in the afternoon and milk dropped', subject: 'animal', expected: 'cattle-heat-stress' },
   { text: 'buffalo breathing fast in the hot weather', subject: 'animal', expected: 'cattle-heat-stress' },
 ];
+
+/**
+ * Harder set: the same problems described in different words (synonyms, Hindi/Hinglish, Tamil), avoiding the
+ * notes' own vocabulary on purpose. This is where embeddings should help over keyword search.
+ */
+export const PARAPHRASE_QUERIES: Array<{ text: string; subject: 'crop' | 'animal'; expected: string }> = [
+  { text: 'boat shaped marks with ash coloured middles on the rice crop', subject: 'crop', expected: 'paddy-blast' },
+  { text: 'rice grains look dirty with dark freckles', subject: 'crop', expected: 'paddy-brown-spot' },
+  { text: 'rice leaves bleached like straw from the top downwards', subject: 'crop', expected: 'paddy-bacterial-blight' },
+  { text: 'millet heads went dark before the grain could fill', subject: 'crop', expected: 'ragi-blast' },
+  { text: 'when I cut the cane the flesh is crimson and smells like vinegar', subject: 'crop', expected: 'sugarcane-red-rot' },
+  { text: 'crop looks washed out, old leaves turning light and growth is slow', subject: 'crop', expected: 'crop-nitrogen-deficiency' },
+  { text: 'middle shoot of young rice is dead and slips out easily', subject: 'crop', expected: 'paddy-stem-borer' },
+  { text: 'dhan ki pattiyon par aankh jaise dhabbe', subject: 'crop', expected: 'paddy-blast' },
+  { text: 'buffalo is frothing at the mouth and walking lame', subject: 'animal', expected: 'cattle-fmd' },
+  { text: 'bhains ke muh se laar gir rahi hai aur khur mein chhale', subject: 'animal', expected: 'cattle-fmd' },
+  { text: "my cow's hide is covered in hard round swellings like coins", subject: 'animal', expected: 'cattle-lumpy-skin' },
+  { text: 'maattukku udambu muzhuvathum kattigal', subject: 'animal', expected: 'cattle-lumpy-skin' },
+  { text: 'one teat gives watery milk with flakes and the quarter feels warm', subject: 'animal', expected: 'cattle-mastitis' },
+  { text: 'gaay ke than mein sujan aur doodh mein khoon', subject: 'animal', expected: 'cattle-mastitis' },
+  { text: 'tiny blood sucking bugs clustered inside the ears', subject: 'animal', expected: 'cattle-ticks' },
+  { text: 'stomach on the left is puffed up like a balloon after grazing clover', subject: 'animal', expected: 'cattle-bloat' },
+  { text: 'animals gasping and crowding in the shade at noon', subject: 'animal', expected: 'cattle-heat-stress' },
+  { text: 'gaay dopahar mein haanf rahi hai aur doodh kam ho gaya', subject: 'animal', expected: 'cattle-heat-stress' },
+];

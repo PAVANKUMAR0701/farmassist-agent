@@ -7,7 +7,7 @@
  *   BEDROCK_AWS_PROFILE=M80PocBedrockKeys npm run retrieval-eval -- --vectors
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { RETRIEVAL_QUERIES } from '../src/knowledge/eval-queries.js';
+import { PARAPHRASE_QUERIES, RETRIEVAL_QUERIES } from '../src/knowledge/eval-queries.js';
 import { NOVA_EMBEDDINGS_REGION, NovaMultimodalEmbedder } from '../src/knowledge/nova-embedder.js';
 import { HybridRetriever, KeywordRetriever, VectorRetriever, type Retriever, type VectorIndex } from '../src/knowledge/retrieval.js';
 import { createBedrockClientFromEnv } from '../src/services/bedrock-client.js';
@@ -21,16 +21,19 @@ if (process.argv.includes('--vectors')) {
   retrievers.push(vector, new HybridRetriever([retrievers[0]!, vector]));
 }
 
-for (const retriever of retrievers) {
-  let hit1 = 0;
-  let hit3 = 0;
-  const misses: string[] = [];
-  for (const q of RETRIEVAL_QUERIES) {
-    const found = (await retriever.search({ text: q.text, subject: q.subject }, 3)).map((r) => r.note.id);
-    if (found[0] === q.expected) hit1++;
-    if (found.includes(q.expected)) hit3++;
-    else misses.push(`"${q.text}" -> ${found.join(', ') || '(nothing)'} (expected ${q.expected})`);
+for (const [setName, queries] of [['same wording as the notes', RETRIEVAL_QUERIES], ['different wording, Hindi and Tamil', PARAPHRASE_QUERIES]] as const) {
+  console.log(`\n== ${setName} (${queries.length} queries)`);
+  for (const retriever of retrievers) {
+    let hit1 = 0;
+    let hit3 = 0;
+    const misses: string[] = [];
+    for (const q of queries) {
+      const found = (await retriever.search({ text: q.text, subject: q.subject }, 3)).map((r) => r.note.id);
+      if (found[0] === q.expected) hit1++;
+      if (found.includes(q.expected)) hit3++;
+      else misses.push(`"${q.text}" -> ${found.join(', ') || '(nothing)'} (expected ${q.expected})`);
+    }
+    console.log(`${retriever.name}: hit@1 ${hit1}/${queries.length}, hit@3 ${hit3}/${queries.length}`);
+    for (const m of misses) console.log(`  miss: ${m}`);
   }
-  console.log(`${retriever.name}: hit@1 ${hit1}/${RETRIEVAL_QUERIES.length}, hit@3 ${hit3}/${RETRIEVAL_QUERIES.length}`);
-  for (const m of misses) console.log(`  miss: ${m}`);
 }

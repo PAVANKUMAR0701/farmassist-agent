@@ -81,8 +81,8 @@ These are all deterministic code, and each was added after a failure seen in tes
 | Web client (sign-in, Chat, Today, Expenses, Farm, Activities) | Deployed; used on a phone |
 | Voice (English, Hindi, Tamil) with read-back | Deployed; tested on a phone with a real microphone |
 | Photo help | Deployed; tested with generated pictures and the full UI path. **Diagnostic accuracy not measured** (needs labelled farm photos) |
-| Weekly insights wording by Nova Lite | Code deployed and evaluated (15/15 after one retry). **Live use needs one trust-policy change** in the Bedrock account; until then the guarded template is used |
-| Nova Multimodal Embeddings for retrieval | Interface, index builder and hybrid retriever built; keyword retrieval is used. **Needs model access** in the Bedrock account (us-east-1) |
+| Weekly insights wording by Nova Lite | Live: deployed server returns Nova Lite wording with both guards passing (15/15 in evaluation after one retry); guarded template if Bedrock fails |
+| Nova Multimodal Embeddings for retrieval | Live (hybrid with keyword). Different-wording and Hindi/Tamil queries: hit@1 16/18 vs keyword 10/18; keyword alone if embeddings fail |
 | Alexa+ | **Not connected**: the Alexa+ developer tools are partner-only. FarmAssist is shown through its own web client. See [FRICTION.md](FRICTION.md) |
 
 Full history and evidence: [docs/progress.md](docs/progress.md).
