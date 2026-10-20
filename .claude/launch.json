@@ -21,6 +21,16 @@
       ],
       "port": 5174,
       "url": "http://127.0.0.1:5174"
+    },
+    {
+      "name": "farmassist-web-ui",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set CHAT_PORT=5175&& npx tsx scripts/local-chat-server.ts --seed"
+      ],
+      "port": 5175,
+      "url": "http://127.0.0.1:5175"
     }
   ]
 }

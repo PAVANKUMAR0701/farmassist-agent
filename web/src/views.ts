@@ -4,7 +4,7 @@
  */
 import { ApiError, readTool, sendChat, sendPhoto, type ChatReply } from './api.js';
 import { shrinkPhoto } from './photo.js';
-import { append, clear, h, label, notice, shortDate, spinner } from './dom.js';
+import { append, badge, clear, h, icon, label, notice, pageHeader, shortDate, spinner, type IconName } from './dom.js';
 import {
   isEcho,
   listen,
@@ -55,19 +55,48 @@ function select(name: string, options: Array<[string, string]>, value: string, o
 // ---------------------------------------------------------------- Chat
 
 const CONVERSATION_KEY = 'farmassist.conversation';
-const SUGGESTIONS = ['Spent 2500 on cattle feed', 'Vaccinated the brown cow', 'How much on feed this month?', "Today's summary"];
+/**
+ * Questions are sent straight away. Examples that would save a record only fill the box, so one tap never
+ * writes to the farm ledger: the farmer edits the amount and presses Send.
+ */
+const SUGGESTIONS: Array<{ text: string; send: boolean }> = [
+  { text: 'How much did I spend today?', send: true },
+  { text: "Today's summary", send: true },
+  { text: 'How much on feed this month?', send: true },
+  { text: 'How was my week?', send: true },
+  { text: 'Spent 500 on cattle feed', send: false },
+  { text: 'Lakshmi gave 8 litres this morning', send: false },
+];
+
+/** Set by chatView: puts text in the assistant's box and focuses it (used by "Record in chat" buttons). */
+let fillComposer: ((text: string) => void) | undefined;
+
+/** Opens the assistant with `text` ready to edit. On a phone that means going to the Ask screen. */
+export function askAssistant(text: string): void {
+  const fill = () => fillComposer?.(text);
+  if (!window.matchMedia(DESKTOP_QUERY).matches && location.hash !== '#/chat') {
+    // The shell re-renders on hashchange (its listener was added first); fill once the assistant is on screen.
+    window.addEventListener('hashchange', fill, { once: true });
+    location.hash = '#/chat';
+  } else fill();
+}
+
+/** Wide screens show the assistant beside every screen instead of on its own tab. */
+export const DESKTOP_QUERY = '(min-width: 1024px)';
 
 export function chatView(): HTMLElement {
-  const log = h('div', { class: 'chat-log', 'aria-live': 'polite' });
-  const input = h('input', { type: 'text', placeholder: 'Type what you spent or did…', maxlength: '500', 'aria-label': 'Message', autocomplete: 'off' });
-  const send = h('button', { type: 'submit', class: 'primary' }, 'Send');
+  const log = h('div', { class: 'chat-log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
+  const input = h('input', { type: 'text', maxlength: '500', 'aria-label': 'Message to FarmAssist', autocomplete: 'off', enterkeyhint: 'send' });
+  const send = h('button', { type: 'submit', class: 'send', 'aria-label': 'Send', title: 'Send' }, icon('send'));
   const prefs = loadVoicePrefs();
   let voiceInput = speechInputSupported();
-  const idlePlaceholder = voiceInput ? 'Type or speak…' : 'Type here…';
+  const idlePlaceholder = voiceInput ? 'Type or speak…' : 'Ask or record…';
   input.placeholder = idlePlaceholder;
-  const mic = h('button', { type: 'button', class: 'mic', 'aria-label': 'Speak', title: 'Speak' }, '🎤');
+  const mic = h('button', { type: 'button', class: 'tool mic', 'aria-label': 'Speak', title: 'Speak' }, icon('mic'));
   let listening: Listening | undefined;
   let openConfirmation: HTMLElement | undefined;
+  /** True while a message or photo is with the server: stops double submissions from taps, chips and Enter. */
+  let busy = false;
   /** What the app last said aloud, to recognise its own voice coming back through the microphone. */
   let lastSpoken = '';
   let conversationId: string | undefined;
@@ -80,8 +109,16 @@ export function chatView(): HTMLElement {
   const bubble = (who: 'me' | 'bot', ...content: Array<Node | string | null>) => {
     const el = h('div', { class: `bubble bubble-${who}` }, ...content);
     log.appendChild(el);
-    el.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    requestAnimationFrame(() => (log.scrollTop = log.scrollHeight));
     return el;
+  };
+  const thinking = (text: string) => bubble('bot', h('p', { class: 'typing' }, h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), text));
+
+  const setBusy = (on: boolean) => {
+    busy = on;
+    send.disabled = on;
+    camera.disabled = on;
+    log.setAttribute('aria-busy', String(on));
   };
 
   const showReply = (reply: ChatReply, spoken: boolean) => {
@@ -101,7 +138,7 @@ export function chatView(): HTMLElement {
         h('button', { type: 'button', class: 'secondary', onclick: () => answer('no') }, 'No'),
       );
     }
-    bubble('bot', h('p', {}, reply.reply), actions, buttons, mode);
+    bubble('bot', h('p', { class: 'lines' }, reply.reply), actions, buttons, mode);
 
     if (spoken && prefs.speakReplies) {
       lastSpoken = reply.reply;
@@ -115,15 +152,15 @@ export function chatView(): HTMLElement {
 
   async function submit(text: string, spoken = false) {
     const message = text.trim();
-    if (!message) return;
+    if (!message || busy) return;
     // Any next message answers (or drops) the pending confirmation, so its buttons stop working.
     openConfirmation?.querySelectorAll('button').forEach((b) => (b.disabled = true));
     openConfirmation = undefined;
     stopSpeaking();
     input.value = '';
     bubble('me', h('p', {}, message), spoken ? h('span', { class: 'spoken', title: 'Spoken' }, '🎤') : null);
-    const pending = bubble('bot', h('p', { class: 'typing' }, 'Thinking…'));
-    send.disabled = true;
+    const pending = thinking('Thinking…');
+    setBusy(true);
     try {
       const reply = await sendChat(message, conversationId, spoken);
       conversationId = reply.conversationId;
@@ -138,14 +175,14 @@ export function chatView(): HTMLElement {
       pending.remove();
       bubble('bot', notice('error', errorText(error), () => void submit(message, spoken)));
     } finally {
-      send.disabled = false;
+      setBusy(false);
     }
   }
 
   function setListening(on: boolean) {
     mic.classList.toggle('listening', on);
     mic.setAttribute('aria-label', on ? 'Stop listening' : 'Speak');
-    mic.textContent = on ? '■' : '🎤';
+    mic.replaceChildren(icon(on ? 'stop' : 'mic'));
     input.placeholder = on ? 'Listening… speak now' : idlePlaceholder;
   }
 
@@ -161,7 +198,7 @@ export function chatView(): HTMLElement {
         if (isEcho(heard, lastSpoken)) {
           // The phone's speaker came back through the mic (heard live, 2026-10-16). Never send that as the farmer's words.
           input.value = '';
-          bubble('bot', notice('info', 'That sounded like my own voice. Please tap 🎤 and speak again, or type.'));
+          bubble('bot', notice('info', 'That sounded like my own voice. Please tap the mic and speak again, or type.'));
           return;
         }
         void submit(heard, true);
@@ -184,13 +221,13 @@ export function chatView(): HTMLElement {
   mic.addEventListener('click', () => (listening ? listening.stop() : startListening()));
 
   // Photo help: a sick animal or a crop problem. Any text in the box goes along as the farmer's note.
-  const photoInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'hidden-file', 'aria-label': 'Photo' });
-  const camera = h('button', { type: 'button', class: 'mic', 'aria-label': 'Send a photo of a sick animal or crop', title: 'Photo help' }, '📷');
+  const photoInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'hidden-file', 'aria-label': 'Photo', tabindex: '-1' });
+  const camera = h('button', { type: 'button', class: 'tool', 'aria-label': 'Send a photo of a sick animal or crop', title: 'Photo help' }, icon('camera'));
   camera.addEventListener('click', () => photoInput.click());
   photoInput.addEventListener('change', async () => {
     const file = photoInput.files?.[0];
     photoInput.value = '';
-    if (!file) return;
+    if (!file || busy) return;
     const note = input.value.trim();
     input.value = '';
     stopSpeaking();
@@ -202,23 +239,24 @@ export function chatView(): HTMLElement {
       return;
     }
     bubble('me', h('img', { class: 'photo', src: shrunk.previewUrl, alt: 'Photo sent for help' }), note ? h('p', {}, note) : null);
-    const pending = bubble('bot', h('p', { class: 'typing' }, 'Looking at the photo…'));
-    camera.disabled = true;
+    const pending = thinking('Looking at the photo…');
+    setBusy(true);
     try {
       const answer = await sendPhoto(shrunk.base64, 'jpeg', note || undefined);
       pending.remove();
-      const box = bubble('bot', h('p', { class: 'lines' }, answer.reply));
+      const box = bubble('bot', answer.urgent ? badge('Needs attention', 'danger') : null, h('p', { class: 'lines' }, answer.reply));
       if (answer.urgent) box.classList.add('urgent');
       if (prefs.speakReplies && lastSpoken) void speak(answer.reply, prefs.lang); // only for farmers already using voice
     } catch (error) {
       pending.remove();
       bubble('bot', notice('error', errorText(error)));
     } finally {
-      camera.disabled = false;
+      setBusy(false);
     }
   });
 
   const newChat = () => {
+    if (busy) return;
     stopSpeaking();
     conversationId = undefined;
     try {
@@ -233,9 +271,22 @@ export function chatView(): HTMLElement {
   const greet = () =>
     bubble(
       'bot',
-      h('p', {}, voiceInput ? 'Namaste! Tap 🎤 and tell me what you spent or did on the farm, or type it.' : 'Namaste! Tell me what you spent or did on the farm, or ask about your records.'),
-      h('div', { class: 'chips' }, ...SUGGESTIONS.map((s) => h('button', { class: 'chip', type: 'button', onclick: () => void submit(s) }, s))),
+      h('p', {}, voiceInput ? 'Namaste! Tap the mic and tell me what you spent or did on the farm, or type it. Send a photo if an animal or crop looks unwell.' : 'Namaste! Tell me what you spent or did on the farm, or ask about your records. Send a photo if an animal or crop looks unwell.'),
+      h(
+        'div',
+        { class: 'chips', role: 'group', 'aria-label': 'Suggestions' },
+        ...SUGGESTIONS.map((s) =>
+          h('button', { class: `chip${s.send ? '' : ' chip-fill'}`, type: 'button', title: s.send ? 'Ask this' : 'Put this in the box to edit, then press Send', onclick: () => (s.send ? void submit(s.text) : fillComposer?.(s.text)) }, s.send ? null : icon('plus'), s.text),
+        ),
+        h('button', { class: 'chip chip-fill', type: 'button', onclick: () => camera.click() }, icon('camera'), 'Check a crop or animal photo'),
+      ),
     );
+
+  fillComposer = (text: string) => {
+    input.value = text;
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
+  };
 
   const voiceSettings =
     voiceInput || speechOutputSupported()
@@ -248,6 +299,7 @@ export function chatView(): HTMLElement {
             { class: 'toggle' },
             h('input', {
               type: 'checkbox',
+              role: 'switch',
               checked: prefs.speakReplies,
               onchange: (e: Event) => {
                 prefs.speakReplies = (e.target as HTMLInputElement).checked;
@@ -260,15 +312,21 @@ export function chatView(): HTMLElement {
         )
       : null;
 
-  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, voiceInput ? mic : null, camera, photoInput, input, send);
+  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, camera, voiceInput ? mic : null, photoInput, input, send);
+  const hint = voiceInput ? null : h('p', { class: 'composer-hint' }, 'Voice input is not available in this browser. Typing and photos still work.');
   greet();
   return h(
     'section',
-    { class: 'view chat' },
-    h('div', { class: 'view-head' }, h('h2', {}, 'Chat'), h('button', { class: 'link', type: 'button', onclick: newChat }, 'New chat')),
+    { class: 'assistant', 'aria-label': 'FarmAssist assistant' },
+    h(
+      'div',
+      { class: 'assistant-head' },
+      h('div', { class: 'assistant-title' }, h('span', { class: 'assistant-mark' }, icon('logo')), h('div', {}, h('strong', {}, 'Ask FarmAssist'), h('span', {}, 'Every number checked against your records'))),
+      h('button', { class: 'ghost', type: 'button', onclick: newChat }, 'New chat'),
+    ),
     voiceSettings,
     log,
-    form,
+    h('div', { class: 'composer-wrap' }, form, hint),
   );
 }
 
@@ -302,21 +360,40 @@ export interface ReminderItem {
   overdue: boolean;
 }
 
-const dueLabel = (i: ReminderItem) => (i.overdue ? `${plural(-i.daysLeft, 'day', 'days')} overdue` : i.daysLeft === 0 ? 'today' : `in ${plural(i.daysLeft, 'day', 'days')}`);
+const dueLabel = (i: ReminderItem) => (i.overdue ? `${plural(-i.daysLeft, 'day', 'days')} overdue` : i.daysLeft === 0 ? 'Due today' : `In ${plural(i.daysLeft, 'day', 'days')}`);
+const dueTone = (i: ReminderItem) => (i.overdue ? 'danger' : i.daysLeft <= 3 ? 'warn' : 'neutral');
+
+const fetchReminders = (days: number) => readTool<{ items: ReminderItem[] }>('list_reminders', { daysAhead: days });
 
 /** Reminders and insurance renewals due in the next `days` days (and anything overdue), soonest first. */
-export async function upcomingList(days: number): Promise<Node> {
-  const { data } = await readTool<{ items: ReminderItem[] }>('list_reminders', { daysAhead: days });
-  if (data.items.length === 0) return notice('empty', `Nothing due in the next ${plural(days, 'day', 'days')}.`);
+export async function upcomingList(days: number, loaded?: Promise<{ data: { items: ReminderItem[] } }>): Promise<Node> {
+  const { data } = await (loaded ?? fetchReminders(days));
+  if (data.items.length === 0) return emptyState('bell', `Nothing due in the next ${plural(days, 'day', 'days')}.`, 'Ask in chat: "Remind me to deworm the calves on Friday".');
   return h(
     'ul',
-    { class: 'breakdown' },
-    ...data.items.map((i) => h('li', { class: i.overdue ? 'overdue' : undefined }, h('span', {}, `${i.source === 'insurance' ? '🛡️ ' : '⏰ '}${i.title}`), h('strong', {}, dueLabel(i)))),
+    { class: 'rows' },
+    ...data.items.map((i) =>
+      h(
+        'li',
+        { class: i.overdue ? 'row overdue' : 'row' },
+        h('span', { class: 'row-icon' }, icon(i.source === 'insurance' ? 'cow' : 'bell')),
+        h('span', { class: 'row-main' }, h('strong', {}, i.title), h('span', { class: 'muted small' }, `${i.source === 'insurance' ? 'Insurance renewal' : 'Reminder'} · ${shortDate(i.dueDate)}`)),
+        badge(dueLabel(i), dueTone(i)),
+      ),
+    ),
   );
 }
 
-export function card(title: string, body: HTMLElement): HTMLElement {
-  return h('article', { class: 'card' }, h('h3', {}, title), body);
+export const emptyState = (name: IconName, text: string, hint?: string) =>
+  h('div', { class: 'empty', role: 'status' }, h('span', { class: 'empty-icon' }, icon(name)), h('p', {}, text), hint ? h('p', { class: 'muted small' }, hint) : null);
+
+export function card(title: string, body: HTMLElement, opts: { icon?: IconName; action?: Node; className?: string } = {}): HTMLElement {
+  return h(
+    'article',
+    { class: `card${opts.className ? ` ${opts.className}` : ''}` },
+    h('div', { class: 'card-head' }, opts.icon ? h('span', { class: 'card-icon' }, icon(opts.icon)) : null, h('h3', {}, title), opts.action ?? null),
+    body,
+  );
 }
 
 export async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
@@ -333,27 +410,93 @@ export async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
 }
 
 export const breakdown = (rows: Array<{ name: string; value: string; count: number }>) =>
-  h('ul', { class: 'breakdown' }, ...rows.map((r) => h('li', {}, h('span', {}, `${label(r.name)} (${r.count})`), h('strong', {}, r.value))));
+  h('ul', { class: 'breakdown' }, ...rows.map((r) => h('li', {}, h('span', {}, `${label(r.name)} `, h('span', { class: 'muted small' }, `(${r.count})`)), h('strong', {}, r.value))));
+
+/** A summary tile on the home screen. It links only to a screen that shows the same records in full. */
+function statTile(href: string, name: IconName, title: string, load: () => Promise<{ value: string; sub: string; tone?: 'warn' | 'danger' }>): HTMLElement {
+  const value = h('span', { class: 'stat-value skeleton' }, '…');
+  const sub = h('span', { class: 'stat-sub' }, 'Loading…');
+  const tile = h('a', { class: 'stat', href }, h('span', { class: 'stat-top' }, h('span', { class: 'stat-icon' }, icon(name)), h('span', { class: 'stat-label' }, title)), value, sub);
+  load()
+    .then((r) => {
+      value.classList.remove('skeleton');
+      value.textContent = r.value;
+      sub.textContent = r.sub;
+      if (r.tone) tile.classList.add(`stat-${r.tone}`);
+    })
+    .catch(() => {
+      value.classList.remove('skeleton');
+      value.textContent = '—';
+      sub.textContent = 'Could not load. Tap Refresh.';
+    });
+  return tile;
+}
+
+interface AnimalsResult {
+  total: number;
+  byType: Array<{ type: string; count: number }>;
+}
+
+const ANIMAL_PLURALS: Record<string, string> = { calf: 'calves', sheep: 'sheep', buffalo: 'buffaloes' };
+/** "4 cows · 1 calf" */
+export const animalCounts = (byType: Array<{ type: string; count: number }>) =>
+  byType.map((t) => plural(t.count, t.type, ANIMAL_PLURALS[t.type] ?? `${t.type}s`)).join(' · ');
+
+const greeting = () => {
+  const hour = new Date().getHours();
+  return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+};
 
 export function todayView(): HTMLElement {
+  const tiles = h('div', { class: 'stats' });
   const today = h('div');
   const month = h('div');
   const upcoming = h('div');
   const week = h('div');
 
   const load = () => {
+    // Each tool is asked once; the tiles and the cards below share the answer.
+    const daily = readTool<DailySummary>('get_daily_summary');
+    const reminders = fetchReminders(7);
+    clear(tiles);
+    append(
+      tiles,
+      statTile('#/expenses', 'wallet', 'Spent today', async () => {
+        const { data } = await daily;
+        return { value: data.expenseTotalDisplay, sub: plural(data.expenseCount, 'expense', 'expenses') };
+      }),
+      statTile('#/farm', 'milk', 'Milk today', async () => {
+        const { data } = await daily;
+        return data.milkTotalMillilitres > 0 ? { value: data.milkTotalDisplay, sub: 'Recorded today' } : { value: '—', sub: 'Not recorded yet' };
+      }),
+      statTile('#/farm', 'cow', 'Animals', async () => {
+        const { data } = await readTool<AnimalsResult>('list_animals');
+        return { value: String(data.total), sub: data.total ? animalCounts(data.byType) : 'None registered' };
+      }),
+      statTile('#/farm', 'sprout', 'Growing crops', async () => {
+        const { data } = await readTool<{ crops: Array<{ status: string; crop: string }> }>('list_crops');
+        const growing = data.crops.filter((c) => c.status === 'growing');
+        return { value: String(growing.length), sub: growing.length ? [...new Set(growing.map((c) => label(c.crop)))].join(', ') : 'None growing' };
+      }),
+      statTile('#/farm', 'bell', 'Due soon', async () => {
+        const { data } = await reminders;
+        const overdue = data.items.filter((i) => i.overdue).length;
+        return { value: String(data.items.length), sub: overdue ? `${overdue} overdue` : data.items.length ? 'Nothing overdue' : 'All clear', ...(overdue ? { tone: 'danger' as const } : {}) };
+      }),
+    );
+
     void fillCard(today, async () => {
-      const { data } = await readTool<DailySummary>('get_daily_summary');
+      const { data } = await daily;
       return h(
         'div',
         {},
-        h('p', { class: 'big' }, data.expenseTotalDisplay),
-        h('p', { class: 'muted' }, `${plural(data.expenseCount, 'expense', 'expenses')} · ${plural(data.activities.length, 'activity', 'activities')} · ${shortDate(data.date)}`),
+        h('p', { class: 'muted small' }, `${shortDate(data.date)} · ${plural(data.expenseCount, 'expense', 'expenses')} · ${plural(data.activities.length, 'activity', 'activities')}`),
         data.byCategory.length ? breakdown(data.byCategory.map((g) => ({ name: g.category, value: g.totalDisplay, count: g.entryCount }))) : null,
         data.milkTotalMillilitres > 0 ? h('p', { class: 'milk-line' }, h('span', {}, 'Milk today'), h('strong', {}, data.milkTotalDisplay)) : null,
         data.activities.length
           ? h('ul', { class: 'plain' }, ...data.activities.map((a) => h('li', {}, `${label(a.activityType)}${a.animalOrField ? ` · ${a.animalOrField}` : ''}`)))
           : null,
+        !data.expenseCount && !data.activities.length && data.milkTotalMillilitres === 0 ? emptyState('list', 'Nothing recorded today yet.', 'Tell FarmAssist what you spent or did, by voice or text.') : null,
       );
     });
     void fillCard(month, async () => {
@@ -362,26 +505,40 @@ export function todayView(): HTMLElement {
         'div',
         {},
         h('p', { class: 'big' }, data.totalDisplay),
-        h('p', { class: 'muted' }, `${plural(data.entryCount, 'expense', 'expenses')} since ${shortDate(data.range.from)}`),
-        data.groups.length ? breakdown(data.groups.map((g) => ({ name: g.key, value: g.totalDisplay, count: g.entryCount }))) : notice('empty', 'Nothing recorded this month yet.'),
+        h('p', { class: 'muted small' }, `${plural(data.entryCount, 'expense', 'expenses')} since ${shortDate(data.range.from)}`),
+        data.groups.length ? breakdown(data.groups.map((g) => ({ name: g.key, value: g.totalDisplay, count: g.entryCount }))) : emptyState('wallet', 'Nothing recorded this month yet.'),
       );
     });
-    void fillCard(upcoming, async () => upcomingList(7));
+    void fillCard(upcoming, () => upcomingList(7, reminders));
     void fillCard(week, async () => {
       const { data } = await readTool<WeeklyInsights>('weekly_insights');
-      return h('div', {}, h('p', {}, data.narrative), h('p', { class: 'muted small' }, 'Every number above is checked against your saved records.'));
+      return h('div', {}, h('p', { class: 'lines' }, data.narrative), h('p', { class: 'muted small verified' }, '✓ Every number here is checked against your saved records.'));
     });
   };
   load();
 
+  const refresh = h('button', { class: 'btn-outline', type: 'button', onclick: load }, icon('refresh'), 'Refresh');
   return h(
     'section',
     { class: 'view' },
-    h('div', { class: 'view-head' }, h('h2', {}, 'Today'), h('button', { class: 'link', type: 'button', onclick: load }, 'Refresh')),
-    card('Spent today', today),
-    card('Coming up', upcoming),
-    card('This month', month),
-    card('Last 7 days', week),
+    pageHeader(greeting(), 'Here is your farm at a glance.', refresh),
+    tiles,
+    h(
+      'div',
+      { class: 'dash-grid' },
+      h(
+        'div',
+        { class: 'dash-col' },
+        card('Today on the farm', today, { icon: 'list', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('') }, 'Record in chat') }),
+        card('Last 7 days', week, { icon: 'sprout' }),
+      ),
+      h(
+        'div',
+        { class: 'dash-col' },
+        card('Coming up', upcoming, { icon: 'bell', action: h('a', { class: 'link', href: '#/farm' }, 'Next 30 days') }),
+        card('This month', month, { icon: 'wallet', action: h('a', { class: 'link', href: '#/expenses' }, 'All expenses') }),
+      ),
+    ),
   );
 }
 
@@ -412,7 +569,7 @@ export function expensesView(): HTMLElement {
       if (!cursor) clear(list);
       clear(more);
       if (summary) append(total, h('span', {}, plural(summary.data.entryCount, 'expense', 'expenses')), h('strong', {}, summary.data.totalDisplay));
-      if (!cursor && page.data.items.length === 0) list.appendChild(h('li', {}, notice('empty', 'No expenses for this choice.')));
+      if (!cursor && page.data.items.length === 0) list.appendChild(h('li', {}, emptyState('wallet', 'No expenses for this choice.', 'Try another period or category, or record one in chat.')));
       for (const e of page.data.items) {
         list.appendChild(
           h('li', { class: 'entry' }, h('div', {}, h('strong', {}, label(e.category)), h('span', { class: 'muted' }, `${shortDate(e.date)}${e.note ? ` · ${e.note}` : ''}`)), h('span', { class: 'amount' }, e.amountDisplay)),
@@ -433,7 +590,14 @@ export function expensesView(): HTMLElement {
     select('Category', [['', 'All categories'], ...CATEGORIES.map((c): [string, string] => [c, label(c)])], category, (v) => ((category = v), void loadPage())),
   );
   void loadPage();
-  return h('section', { class: 'view' }, h('div', { class: 'view-head' }, h('h2', {}, 'Expenses')), filters, total, list, more);
+  return h(
+    'section',
+    { class: 'view' },
+    pageHeader('Expenses', 'Every amount is worked out from your saved records.', h('button', { class: 'primary btn', type: 'button', onclick: () => askAssistant('Spent ') }, icon('plus'), 'Record expense')),
+    h('div', { class: 'card filter-card' }, filters, total),
+    list,
+    more,
+  );
 }
 
 // ---------------------------------------------------------------- Activities
@@ -450,10 +614,10 @@ export function activitiesView(): HTMLElement {
       const { text, data } = await readTool<{ items: ActivityView[]; totalCount: number }>('list_activities', { period, ...(activityType ? { activityType } : {}), limit: 100 });
       clear(body);
       if (data.items.length === 0) {
-        body.appendChild(notice('empty', 'No activities for this choice.'));
+        body.appendChild(emptyState('list', 'No activities for this choice.', 'Try another period, or record one in chat.'));
         return;
       }
-      body.appendChild(h('p', { class: 'muted' }, text));
+      body.appendChild(h('p', { class: 'muted small' }, text));
       body.appendChild(
         h(
           'ul',
@@ -480,5 +644,11 @@ export function activitiesView(): HTMLElement {
     select('Activity', [['', 'All activities'], ...ACTIVITY_TYPES.map((t): [string, string] => [t, label(t)])], activityType, (v) => ((activityType = v), void load())),
   );
   void load();
-  return h('section', { class: 'view' }, h('div', { class: 'view-head' }, h('h2', {}, 'Activities')), filters, body);
+  return h(
+    'section',
+    { class: 'view' },
+    pageHeader('Activities', 'Milking, vaccinations, sowing and other farm work.', h('button', { class: 'primary btn', type: 'button', onclick: () => askAssistant('Vaccinated ') }, icon('plus'), 'Record activity')),
+    h('div', { class: 'card filter-card' }, filters),
+    body,
+  );
 }

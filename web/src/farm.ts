@@ -3,8 +3,8 @@
  * worked out by the server (the client adds nothing up).
  */
 import { readTool } from './api.js';
-import { h, label, notice, shortDate } from './dom.js';
-import { breakdown, card, fillCard, plural, upcomingList } from './views.js';
+import { badge, h, icon, label, pageHeader, shortDate } from './dom.js';
+import { animalCounts, askAssistant, breakdown, card, emptyState, fillCard, plural, upcomingList } from './views.js';
 
 interface AnimalView {
   animalId: string;
@@ -45,12 +45,12 @@ const joinParts = (parts: Array<string | undefined | false>) => parts.filter(Boo
 
 async function herdCard(): Promise<Node> {
   const { data } = await readTool<{ animals: AnimalView[]; total: number; byType: Array<{ type: string; count: number }> }>('list_animals');
-  if (data.total === 0) return notice('empty', 'No animals registered yet. In Chat, say "I have 3 cows: Lakshmi, Maya and Geeta".');
+  if (data.total === 0) return emptyState('cow', 'No animals registered yet.', 'In chat, say "I have 3 cows: Lakshmi, Maya and Geeta".');
   return h(
     'div',
     {},
     h('p', { class: 'big' }, plural(data.total, 'animal', 'animals')),
-    h('p', { class: 'muted' }, data.byType.map((t) => plural(t.count, t.type, ({ calf: 'calves', sheep: 'sheep', buffalo: 'buffaloes' } as Record<string, string>)[t.type] ?? `${t.type}s`)).join(' · ')),
+    h('p', { class: 'muted small' }, animalCounts(data.byType)),
     h(
       'ul',
       { class: 'entries' },
@@ -58,12 +58,14 @@ async function herdCard(): Promise<Node> {
         h(
           'li',
           { class: 'entry' },
+          h('span', { class: 'avatar', 'aria-hidden': 'true' }, (a.name ?? a.type).charAt(0).toUpperCase()),
           h(
             'div',
             {},
             h('strong', {}, `${a.name ?? `Tag ${a.tagNumber}`}${a.breed ? ` · ${a.breed}` : ''}`),
-            h('span', { class: 'muted' }, joinParts([label(a.type), a.age, a.motherName && `mother ${a.motherName}`, a.insuredUntil && `insured till ${shortDate(a.insuredUntil)}`])),
+            h('span', { class: 'muted' }, joinParts([label(a.type), a.age, a.motherName && `mother ${a.motherName}`])),
           ),
+          a.insuredUntil ? badge(`Insured till ${shortDate(a.insuredUntil)}`, 'ok') : null,
         ),
       ),
     ),
@@ -72,19 +74,19 @@ async function herdCard(): Promise<Node> {
 
 async function milkCard(): Promise<Node> {
   const { data } = await readTool<MilkSummary>('get_milk_summary', { period: 'last_7_days', groupBy: 'animal' });
-  if (data.entryCount === 0) return notice('empty', 'No milk recorded in the last 7 days. In Chat, say "Lakshmi gave 8 litres this morning".');
+  if (data.entryCount === 0) return emptyState('milk', 'No milk recorded in the last 7 days.', 'In chat, say "Lakshmi gave 8 litres this morning".');
   return h(
     'div',
     {},
     h('p', { class: 'big' }, data.totalDisplay),
-    h('p', { class: 'muted' }, `Average ${data.averagePerRecordedDayDisplay} per day over ${plural(data.daysWithRecords, 'day', 'days')} with records`),
+    h('p', { class: 'muted small' }, `Average ${data.averagePerRecordedDayDisplay} per day over ${plural(data.daysWithRecords, 'day', 'days')} with records`),
     breakdown(data.groups.map((g) => ({ name: g.key, value: g.display, count: g.entryCount }))),
   );
 }
 
 async function cropsCard(): Promise<Node> {
   const { data } = await readTool<{ crops: CropView[] }>('list_crops');
-  if (data.crops.length === 0) return notice('empty', 'No crops recorded. In Chat, say "I planted paddy in the north field, 2 acres, 50 kg seed".');
+  if (data.crops.length === 0) return emptyState('sprout', 'No crops recorded yet.', 'In chat, say "I planted paddy in the north field, 2 acres, 50 kg seed".');
   return h(
     'ul',
     { class: 'entries' },
@@ -96,11 +98,12 @@ async function cropsCard(): Promise<Node> {
           'div',
           {},
           h('strong', {}, `${label(c.crop)}${c.variety ? ` (${c.variety})` : ''} · ${c.field}`),
-          h('span', { class: 'muted' }, joinParts([`sown ${shortDate(c.sownDate)}`, c.areaDisplay, c.seedDisplay && `seed ${c.seedDisplay}`, c.status === 'growing' ? `${c.daysSinceSowing} days, growing` : 'harvested'])),
+          h('span', { class: 'muted' }, joinParts([`Sown ${shortDate(c.sownDate)}`, c.areaDisplay, c.seedDisplay && `seed ${c.seedDisplay}`])),
           c.harvestCount
             ? h('span', { class: 'harvest' }, joinParts([`Harvest ${c.harvestedDisplay}`, c.yieldPerAcreDisplay, c.harvestToSeedRatio ? `${c.harvestToSeedRatio}× the seed` : undefined]))
             : null,
         ),
+        c.status === 'growing' ? badge(`Growing · day ${c.daysSinceSowing}`, 'ok') : badge('Harvested', 'neutral'),
       ),
     ),
   );
@@ -121,10 +124,22 @@ export function farmView(): HTMLElement {
   return h(
     'section',
     { class: 'view' },
-    h('div', { class: 'view-head' }, h('h2', {}, 'Farm'), h('button', { class: 'link', type: 'button', onclick: load }, 'Refresh')),
-    card('Coming up (30 days)', upcoming),
-    card('Herd', herd),
-    card('Milk, last 7 days', milk),
-    card('Crops', crops),
+    pageHeader('Farm', 'Your animals, milk, crops and what is coming up.', h('button', { class: 'btn-outline', type: 'button', onclick: load }, icon('refresh'), 'Refresh')),
+    h(
+      'div',
+      { class: 'dash-grid' },
+      h(
+        'div',
+        { class: 'dash-col' },
+        card('Herd', herd, { icon: 'cow', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('I have a cow named ') }, 'Add in chat') }),
+        card('Crops', crops, { icon: 'sprout', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('I planted ') }, 'Add in chat') }),
+      ),
+      h(
+        'div',
+        { class: 'dash-col' },
+        card('Coming up (30 days)', upcoming, { icon: 'bell' }),
+        card('Milk, last 7 days', milk, { icon: 'milk', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('') }, 'Record in chat') }),
+      ),
+    ),
   );
 }
