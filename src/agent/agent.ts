@@ -71,6 +71,8 @@ export interface AgentToolCall {
   name: string;
   args: Record<string, unknown>;
   result: ToolCallResult;
+  /** How long the MCP call took, for showing next to the reply. */
+  durationMs?: number;
 }
 
 export interface AgentTurn {
@@ -572,6 +574,7 @@ export class FarmAgent {
   private async runTool(name: string, input: Record<string, unknown>): Promise<AgentToolCall> {
     const args = WRITE_TOOLS.has(name) && !input.clientRequestId ? { ...input, clientRequestId: `agent-${ulid()}` } : { ...input };
     let result: ToolCallResult;
+    const started = Date.now();
     try {
       result = await this.tools.callTool(name, args);
     } catch {
@@ -579,7 +582,7 @@ export class FarmAgent {
     }
     const entry = result.structured?.entry as { entryId?: unknown; category?: unknown } | undefined;
     if (!result.isError && typeof entry?.entryId === 'string' && entry.category !== undefined) this.lastExpenseId = entry.entryId;
-    return { name, args, result };
+    return { name, args, result, durationMs: Date.now() - started };
   }
 
   /**

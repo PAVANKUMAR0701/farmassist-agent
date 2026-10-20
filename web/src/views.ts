@@ -108,6 +108,38 @@ const SIM_TEXT: Record<SimState, { status: string; hint: string; orb: string }> 
   error: { status: 'Error — voice stopped', hint: '', orb: 'Try voice again' },
 };
 
+/** "MCP tool calls" above a reply: one row per call, tap to see what was sent and what came back. */
+function toolCallList(actions: ChatReply['actions']): HTMLElement {
+  return h(
+    'div',
+    { class: 'tool-calls' },
+    h('p', { class: 'tool-calls-title' }, 'MCP tool calls'),
+    ...actions.map((a) =>
+      h(
+        'details',
+        { class: `tool-call${a.ok ? '' : ' failed'}` },
+        h(
+          'summary',
+          {},
+          h('span', { class: 'tc-mark', 'aria-label': a.ok ? 'Succeeded' : 'Failed' }, a.ok ? '✓' : '✗'),
+          h('code', { class: 'tc-name' }, a.tool),
+          h('span', { class: 'tc-text' }, a.text),
+          a.ms !== undefined ? h('span', { class: 'tc-ms' }, `${a.ms}ms`) : null,
+          h('span', { class: 'tc-chevron' }, icon('chevron')),
+        ),
+        h(
+          'div',
+          { class: 'tc-body' },
+          h('p', { class: 'tc-label' }, 'Result'),
+          h('p', {}, a.text),
+          a.input && Object.keys(a.input).length ? h('p', { class: 'tc-label' }, 'Input') : null,
+          a.input && Object.keys(a.input).length ? h('pre', {}, JSON.stringify(a.input, null, 1)) : null,
+        ),
+      ),
+    ),
+  );
+}
+
 export function chatView(): HTMLElement {
   const log = h('div', { class: 'chat-log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
   const input = h('input', { type: 'text', maxlength: '500', 'aria-label': 'Message to FarmAssist', autocomplete: 'off', enterkeyhint: 'send', placeholder: 'Type a question or record…' });
@@ -141,11 +173,10 @@ export function chatView(): HTMLElement {
   };
 
   const showReply = (reply: ChatReply) => {
-    // What the server did, in its own words; skipped when the reply already is that text (basic mode).
-    const extra = reply.actions.filter((a) => a.text !== reply.reply);
-    const actions = extra.length
-      ? h('ul', { class: 'actions' }, ...extra.map((a) => h('li', { class: a.ok ? 'ok' : 'failed' }, `${a.ok ? '✓' : '✗'} ${a.text}`)))
-      : null;
+    // Every MCP tool call behind the reply, as the server reported it. Tap one to see its input and result.
+    if (reply.actions.length) log.appendChild(toolCallList(reply.actions));
+    // Something was saved: let the screen beside the assistant reload its records.
+    if (reply.actions.some((x) => x.ok && !/^(get|list|search)_|^weekly_insights$/.test(x.tool))) window.dispatchEvent(new Event('farmassist:changed'));
     const mode = reply.mode === 'fallback' ? h('div', { class: 'mode' }, reply.modelUnavailable ? 'Basic mode: the AI assistant is unavailable right now.' : 'Basic mode') : null;
     let buttons: HTMLElement | null = null;
     if (reply.awaitingConfirmation) {
@@ -161,7 +192,7 @@ export function chatView(): HTMLElement {
         h('button', { type: 'button', class: 'secondary', onclick: () => void answer('no') }, 'No'),
       );
     }
-    bubble('bot', h('p', { class: 'lines' }, reply.reply), actions, buttons, mode);
+    bubble('bot', h('p', { class: 'lines' }, reply.reply), buttons, mode);
   };
 
   /** Sends one message and shows the reply. `spoken` marks voice: the backend then reads changes back first. */
@@ -173,6 +204,7 @@ export function chatView(): HTMLElement {
     openConfirmation = undefined;
     stopSpeaking();
     if (!spoken) input.value = '';
+    simBox.classList.add('compact'); // like a voice assistant: the orb steps aside once the conversation starts
     bubble('me', h('p', {}, message), spoken ? h('span', { class: 'spoken', title: 'Spoken' }, '🎤') : null);
     const pending = thinking('Thinking…');
     setBusy(true);
@@ -201,6 +233,9 @@ export function chatView(): HTMLElement {
   const status = h('p', { class: 'sim-status' });
   const hint = h('p', { class: 'sim-hint', 'aria-live': 'polite' });
   const micOff = h('button', { type: 'button', class: 'ghost sim-off', hidden: true }, icon('stop'), 'Mic off');
+  /** The round mic beside Send: the same as tapping the orb. */
+  const talk = h('button', { type: 'button', class: 'talk', 'data-state': 'off' }, icon('mic'));
+  const simBox = h('div', { class: 'sim' }, orb, h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style voice simulator'), status, hint));
   const render = (state: SimState, view: SimView) => {
     const text = SIM_TEXT[state];
     orb.dataset.state = state;
@@ -212,7 +247,12 @@ export function chatView(): HTMLElement {
       view.message ??
       (view.transcript ? `“${view.transcript}”` : state === 'listening' && view.confirming ? 'Say "yes" to save it, or "no" to cancel.' : text.hint);
     hint.classList.toggle('heard', Boolean(view.transcript));
+    hint.classList.toggle('err', Boolean(view.message));
     micOff.hidden = !sim.isActive;
+    talk.dataset.state = state;
+    talk.disabled = state === 'processing';
+    talk.setAttribute('aria-label', text.orb);
+    talk.replaceChildren(icon(state === 'listening' || state === 'speaking' ? 'stop' : 'mic'));
   };
   const sim = new VoiceSimulator({
     createRecognition,
@@ -231,6 +271,7 @@ export function chatView(): HTMLElement {
   });
   stopVoice = () => sim.isActive && sim.stop();
   orb.addEventListener('click', () => sim.tap());
+  talk.addEventListener('click', () => sim.tap());
   micOff.addEventListener('click', () => sim.stop());
   render('off', {});
   if (!voiceInput) {
@@ -287,6 +328,7 @@ export function chatView(): HTMLElement {
       /* ignore */
     }
     clear(log);
+    simBox.classList.remove('compact');
     greet();
   };
 
@@ -331,7 +373,7 @@ export function chatView(): HTMLElement {
     }
   });
 
-  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), sim.cancelCommand(), void submit(input.value)) }, camera, photoInput, input, send);
+  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), sim.cancelCommand(), void submit(input.value)) }, camera, photoInput, input, send, voiceInput ? talk : null);
   greet();
   return h(
     'section',
@@ -342,15 +384,15 @@ export function chatView(): HTMLElement {
       h('div', { class: 'assistant-title' }, h('span', { class: 'assistant-mark' }, icon('logo')), h('div', {}, h('strong', {}, 'Ask FarmAssist'), h('span', {}, 'Every number checked against your records'))),
       h('button', { class: 'ghost', type: 'button', onclick: newChat }, 'New chat'),
     ),
+    simBox,
+    log,
     h(
       'div',
-      { class: 'sim' },
-      orb,
-      h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style voice simulator'), status, hint),
+      { class: 'composer-wrap' },
+      form,
       h('div', { class: 'sim-controls' }, voiceInput || voiceOutput ? language : null, voiceOutput ? speaker : null, micOff),
+      h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.'),
     ),
-    log,
-    h('div', { class: 'composer-wrap' }, form, h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.')),
   );
 }
 

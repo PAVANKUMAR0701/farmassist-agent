@@ -411,3 +411,50 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 /* Shown only by the local development server */
 .dev-banner { background: #fff3cd; color: #5c4400; padding: 8px 16px; font-size: 0.85rem; text-align: center; border-bottom: 1px solid #e6d28a; }
 @media (prefers-color-scheme: dark) { .dev-banner { background: #3a3110; color: #f3dd8f; border-color: #5c4d18; } }
+
+/* Once the conversation starts, the orb shrinks into a header row (like a voice assistant mid-conversation). */
+.sim.compact { grid-template-columns: auto minmax(0, 1fr); justify-items: start; text-align: left; padding: 10px 16px; }
+.sim.compact .orb { grid-row: auto; width: 52px; height: 52px; border-width: 4px; }
+.sim.compact .orb .orb-core .ico { width: 20px; height: 20px; }
+.sim.compact .sim-status { font-size: 1rem; }
+.sim.compact .sim-hint:not(.heard):not(.err) { display: none; }
+.sim.compact .sim-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sim-hint.err { color: #ffb4ab; }
+@media (min-width: 1024px) {
+  .side .sim.compact { grid-template-columns: auto minmax(0, 1fr); justify-items: start; text-align: left; padding: 10px 16px; }
+  .side .sim.compact .orb { width: 56px; height: 56px; border-width: 4px; }
+  .side .sim.compact .orb .orb-core .ico { width: 22px; height: 22px; }
+}
+.composer-wrap .sim-controls { grid-column: auto; margin-top: 8px; justify-content: flex-start; }
+
+/* The round mic beside Send */
+.composer .talk {
+  width: 46px; height: 46px; min-height: 0; padding: 0; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(145deg, #3fd0f5, #1f8fd6); color: #fff; box-shadow: 0 4px 14px rgba(31, 143, 214, 0.35);
+}
+.composer .talk[data-state='listening'] { background: #c62828; box-shadow: 0 0 0 4px rgba(198, 40, 40, 0.3); }
+.composer .talk[data-state='speaking'] { background: var(--mint); color: #0d1a10; }
+.composer .send { background: transparent; color: var(--on-ink-muted); }
+.composer .send:hover:not(:disabled) { color: var(--on-ink); background: var(--ink-3); }
+
+/* MCP tool calls above a reply */
+.tool-calls { align-self: stretch; display: grid; gap: 6px; max-width: 100%; }
+.tool-calls-title { margin: 4px 0 0; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--on-ink-muted); }
+.tool-call { border: 1px solid var(--ink-3); border-radius: 10px; background: var(--ink); min-width: 0; }
+.tool-call summary { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; min-height: 40px; font-size: 0.86rem; }
+.tool-call summary::-webkit-details-marker { display: none; }
+.tool-call summary:focus-visible { outline: 2px solid var(--mint); outline-offset: 1px; border-radius: 10px; }
+.tc-mark { color: var(--mint); font-weight: 700; flex: none; }
+.tool-call.failed .tc-mark { color: #ffb4ab; }
+.tc-name { color: #5fd3f3; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.82rem; flex: none; }
+.tc-text { flex: 1; min-width: 0; color: var(--on-ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-ms { flex: none; color: var(--on-ink-muted); font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
+.tc-chevron { flex: none; display: inline-flex; color: var(--on-ink-muted); transition: transform 0.15s; }
+.tc-chevron .ico { width: 16px; height: 16px; }
+.tool-call[open] .tc-chevron { transform: rotate(90deg); }
+.tc-body { padding: 0 12px 10px 30px; font-size: 0.84rem; color: var(--on-ink); overflow-wrap: anywhere; }
+.tc-body p { margin: 4px 0 0; }
+.tc-label { color: var(--on-ink-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px !important; }
+.tc-body pre { margin: 4px 0 0; padding: 8px; border-radius: 8px; background: var(--ink-2); font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+@media (max-width: 420px) { .tc-text { display: none; } .tool-call summary .tc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; } }

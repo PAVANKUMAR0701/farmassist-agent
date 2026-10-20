@@ -208,7 +208,8 @@ export interface ChatReply {
   /** A spoken change is waiting: `reply` is the read-back question, to be answered "yes" or "no". */
   awaitingConfirmation?: boolean;
   confirmed?: boolean;
-  actions: Array<{ tool: string; ok: boolean; text: string }>;
+  /** Every MCP tool the assistant called for this reply: its first line of text, time taken and arguments. */
+  actions: Array<{ tool: string; ok: boolean; text: string; ms?: number; input?: Record<string, unknown> }>;
 }
 
 /** `voice: true` marks a spoken message: the backend then reads changes back and waits for a yes. */

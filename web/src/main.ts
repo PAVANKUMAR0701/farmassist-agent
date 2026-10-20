@@ -172,6 +172,13 @@ function render(message?: string): void {
 
 setSignedOutHandler((reason) => render(reason));
 window.addEventListener('hashchange', () => render());
+// A record was saved in chat: reload the page beside the assistant (the conversation itself is kept).
+window.addEventListener('farmassist:changed', () => {
+  if (!isSignedIn() || !root.querySelector('.content > .view')) return;
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+});
 window.addEventListener('online', () => render());
 window.addEventListener('offline', () => render());
 desktop.addEventListener('change', () => isSignedIn() && render());

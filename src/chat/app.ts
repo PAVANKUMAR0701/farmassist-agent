@@ -166,7 +166,14 @@ async function chat(body: Record<string, unknown>, user: ChatUser, tools: FarmTo
     ...(turn.confirmation ? { awaitingConfirmation: true } : {}),
     ...(turn.confirmed !== undefined ? { confirmed: turn.confirmed } : {}),
     // What the server did, in its own words, so the screen can show it next to the reply.
-    actions: turn.toolCalls.map((c) => ({ tool: c.name, ok: !c.result.isError, text: c.result.text.split('\n')[0] })),
+    actions: turn.toolCalls.map((c) => ({
+      tool: c.name,
+      ok: !c.result.isError,
+      text: c.result.text.split('\n')[0],
+      ...(c.durationMs !== undefined ? { ms: c.durationMs } : {}),
+      // The farmer's own arguments for the call, without the internal idempotency key.
+      input: Object.fromEntries(Object.entries(c.args).filter(([key]) => key !== 'clientRequestId')),
+    })),
   });
 }
 
