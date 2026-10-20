@@ -38,7 +38,7 @@ class FakeRecognition implements Recognition {
   }
 }
 
-function setup(reply: SimReply | undefined = { reply: 'Spent ₹3,700.00 today.' }, speakEnabled = true) {
+function setup(reply: SimReply | undefined = { reply: 'Spent ₹3,700.00 today.' }, speakEnabled = true, handsFree = true) {
   const recognisers: FakeRecognition[] = [];
   const states: SimState[] = [];
   const views: Array<{ state: SimState; transcript?: string; message?: string }> = [];
@@ -60,6 +60,7 @@ function setup(reply: SimReply | undefined = { reply: 'Spent ₹3,700.00 today.'
     },
     onIncomplete: vi.fn(),
     onNotice: vi.fn(),
+    handsFree: () => handsFree,
   } satisfies SimDeps;
   const sim = new VoiceSimulator(deps, { silenceMs: 1000, commandTimeoutMs: 5000, resumeDelayMs: 100 });
   const mic = () => recognisers.filter((r) => r.running).at(-1)!;
@@ -249,5 +250,43 @@ describe('VoiceSimulator', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(deps.submit).not.toHaveBeenCalled();
     expect(sim.state).toBe('ready');
+  });
+
+  it('the mic button talks straight away, no wake word, and with hands-free on waits for "Alexa" afterwards', async () => {
+    const { sim, deps, mic, states } = setup();
+    sim.talk();
+    expect(sim.state).toBe('listening');
+    mic().hear('show my crop details');
+    await vi.advanceTimersByTimeAsync(1000 + 100);
+    expect(deps.submit).toHaveBeenCalledExactlyOnceWith('show my crop details');
+    expect(states).toEqual(['listening', 'processing', 'speaking', 'ready']);
+    expect(mic()).toBeDefined();
+  });
+
+  it('with hands-free off, the mic turns off after the reply', async () => {
+    const { sim, mic, recognisers } = setup(undefined, true, false);
+    sim.talk();
+    mic().hear('how much did I spend today');
+    await vi.advanceTimersByTimeAsync(1000 + 100);
+    expect(sim.state).toBe('off');
+    expect(recognisers.filter((r) => r.running)).toHaveLength(0);
+  });
+
+  it('the mic button while listening cancels without sending', async () => {
+    const { sim, deps, mic } = setup(undefined, true, false);
+    sim.talk();
+    mic().hear('spent 500', false);
+    sim.talk();
+    expect(sim.state).toBe('off');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(deps.submit).not.toHaveBeenCalled();
+  });
+
+  it('switching hands-free on starts waiting for "Alexa"; off stops it', () => {
+    const { sim } = setup();
+    sim.handsFreeChanged(true);
+    expect(sim.state).toBe('ready');
+    sim.handsFreeChanged(false);
+    expect(sim.state).toBe('off');
   });
 });

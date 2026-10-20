@@ -40,6 +40,8 @@ export interface SimDeps {
   /** The words heard never became final: put them in the text box for the farmer to check and send. */
   onIncomplete(text: string): void;
   onNotice(text: string): void;
+  /** Hands-free: after each reply, keep the mic on and wait for "Alexa". Off: the mic turns off after each reply. */
+  handsFree?(): boolean;
 }
 
 export interface SimOptions {
@@ -104,6 +106,33 @@ export class VoiceSimulator {
     this.set('off');
   }
 
+  /** The mic button: talk now (no wake word needed); while listening it cancels; while speaking it stops the voice. */
+  talk(): void {
+    switch (this.state) {
+      case 'off':
+      case 'error':
+      case 'ready':
+        this.active = true;
+        if (this.state !== 'ready') this.restarts = [];
+        this.listenForCommand(false);
+        break;
+      case 'listening':
+        this.idle();
+        break;
+      case 'speaking':
+        this.deps.stopSpeaking();
+        break;
+      case 'processing':
+        break;
+    }
+  }
+
+  /** Hands-free switched on: wait for "Alexa" now. Switched off: stop waiting (a command in progress finishes first). */
+  handsFreeChanged(on: boolean): void {
+    if (on && (this.state === 'off' || this.state === 'error')) this.start();
+    else if (!on && this.state === 'ready') this.stop();
+  }
+
   /** The orb: off/error -> on; ready -> talk now (no wake word); listening -> cancel; speaking -> stop talking. */
   tap(): void {
     switch (this.state) {
@@ -115,7 +144,7 @@ export class VoiceSimulator {
         this.listenForCommand(false);
         break;
       case 'listening':
-        this.toReady();
+        this.idle();
         break;
       case 'speaking':
         this.deps.stopSpeaking(); // the speak() promise resolves and the simulator moves on
@@ -127,7 +156,7 @@ export class VoiceSimulator {
 
   /** The farmer answered with a button or typed instead: drop any voice command in progress. */
   cancelCommand(): void {
-    if (this.active && this.state === 'listening') this.toReady();
+    if (this.active && this.state === 'listening') this.idle();
   }
 
   /** Reads text aloud as the assistant (e.g. a photo answer), pausing the mic so it is not heard as a command. */
@@ -138,7 +167,7 @@ export class VoiceSimulator {
     this.clearTimers();
     this.closeMic();
     await this.speakReply(text);
-    if (this.active && this.state === 'speaking') this.toReady();
+    if (this.active && this.state === 'speaking') this.idle();
   }
 
   // ---------------------------------------------------------------- states
@@ -154,6 +183,12 @@ export class VoiceSimulator {
     this.confirming = false;
     this.set('ready');
     this.openMic();
+  }
+
+  /** After a command (or a cancelled one): wait for "Alexa" when hands-free is on, otherwise turn the mic off. */
+  private idle(): void {
+    if (this.deps.handsFree?.() ?? true) this.toReady();
+    else this.stop();
   }
 
   private listenForCommand(confirming: boolean): void {
@@ -288,7 +323,7 @@ export class VoiceSimulator {
     this.commandTimer = setTimeout(() => {
       if (this.state !== 'listening' || this.commandOf(this.heardText())) return;
       this.deps.onNotice(this.confirming ? 'I did not hear yes or no, so nothing was saved yet. Tap Yes or No, or say "Alexa, yes".' : "I didn't hear a question. Say \"Alexa\" and try again, or type below.");
-      this.toReady();
+      this.idle();
     }, this.opts.commandTimeoutMs);
   }
 
@@ -303,7 +338,7 @@ export class VoiceSimulator {
     if (this.interim || !command) {
       // Never send words the recogniser was not sure of: let the farmer check them first.
       const heard = this.commandOf(this.heardText());
-      this.toReady();
+      this.idle();
       if (heard) this.deps.onIncomplete(heard);
       return;
     }
@@ -320,17 +355,17 @@ export class VoiceSimulator {
       if (isEcho(command, this.lastSpoken)) {
         // The speaker came back through the mic (heard live, 2026-10-16). Never send that as the farmer's words.
         this.deps.onNotice('That sounded like my own voice, so I ignored it. Say "Alexa" and speak again.');
-        return this.toReady();
+        return this.idle();
       }
       this.set('processing', { transcript: command });
       const reply = await this.deps.submit(command);
       if (!this.active) return;
-      if (!reply) return this.toReady();
+      if (!reply) return this.idle();
       if (this.deps.speakEnabled()) await this.speakReply(reply.reply);
       if (!this.active) return;
       // A read-back question ("Shall I record ₹500…?") is answered without saying "Alexa" again.
       if (reply.awaitingConfirmation) this.listenForCommand(true);
-      else this.toReady();
+      else this.idle();
     } finally {
       this.busy = false;
     }

@@ -338,9 +338,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .sim-controls select { min-height: 36px; padding: 4px 10px; width: auto; background: var(--ink-2); border-color: var(--ink-3); color: var(--on-ink); font-size: 0.86rem; }
 .sim-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 1px solid var(--ink-3); color: var(--on-ink); font-size: 0.84rem; font-weight: 600; }
 .sim-toggle[aria-pressed='false'] { color: var(--on-ink-muted); }
-.sim-toggle .ico, .sim-off .ico { width: 16px; height: 16px; }
-.assistant button.sim-off { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; color: #ffb4ab; border-color: #5a3330; }
-.assistant button.sim-off[hidden] { display: none; }
+.sim-toggle .ico { width: 16px; height: 16px; }
 @media (min-width: 1024px) {
   .side .sim { grid-template-columns: 1fr; justify-items: center; text-align: center; padding: 18px 16px 14px; }
   .side .orb { grid-row: auto; width: 120px; height: 120px; border-width: 6px; }
@@ -417,9 +415,9 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .sim.compact .orb { grid-row: auto; width: 52px; height: 52px; border-width: 4px; }
 .sim.compact .orb .orb-core .ico { width: 20px; height: 20px; }
 .sim.compact .sim-status { font-size: 1rem; }
-.sim.compact .sim-hint:not(.heard):not(.err) { display: none; }
 .sim.compact .sim-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sim-hint.err { color: #ffb4ab; }
+.sim.compact .sim-hint:not(.err) { display: none; }
 @media (min-width: 1024px) {
   .side .sim.compact { grid-template-columns: auto minmax(0, 1fr); justify-items: start; text-align: left; padding: 10px 16px; }
   .side .sim.compact .orb { width: 56px; height: 56px; border-width: 4px; }
@@ -433,8 +431,27 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   display: inline-flex; align-items: center; justify-content: center;
   background: linear-gradient(145deg, #3fd0f5, #1f8fd6); color: #fff; box-shadow: 0 4px 14px rgba(31, 143, 214, 0.35);
 }
-.composer .talk[data-state='listening'] { background: #c62828; box-shadow: 0 0 0 4px rgba(198, 40, 40, 0.3); }
-.composer .talk[data-state='speaking'] { background: var(--mint); color: #0d1a10; }
+/* The mic beside Send: blue to talk; red with a stop square while listening (the orb above does the glowing). */
+.composer .talk[data-state='listening'] { background: #e5484d; box-shadow: 0 0 0 4px rgba(229, 72, 77, 0.25); }
+.composer .talk[data-state='speaking'] { background: linear-gradient(145deg, #3fd0f5, #1f8fd6); }
+.composer .talk[data-state='error'] { background: #8a2f26; box-shadow: none; }
+
+/* Status line: the words heard replace it while listening */
+.sim-status.heard { font-style: italic; font-weight: 600; }
+.sim-hint:empty { display: none; }
+
+/* "Try saying" examples until the conversation starts */
+.try { display: grid; gap: 8px; margin-top: auto; }
+.try-title { margin: 0 0 2px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--on-ink-muted); }
+.try-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: var(--ink-2); border: 1px solid var(--ink-3); color: var(--on-ink); border-radius: 12px; padding: 10px 14px; min-height: 46px; font-size: 0.95rem;
+}
+.try-item:hover { background: var(--ink-3); }
+.try-item.fill { color: var(--on-ink-muted); border-style: dashed; }
+.try-item .ico { width: 16px; height: 16px; color: var(--mint); }
+.hands-free[aria-pressed='true'] { color: var(--mint); border-color: rgba(143, 211, 160, 0.45); }
+.composer-wrap .sim-controls .hands-free { margin-left: auto; }
 .composer .send { background: transparent; color: var(--on-ink-muted); }
 .composer .send:hover:not(:disabled) { color: var(--on-ink); background: var(--ink-3); }
 

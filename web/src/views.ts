@@ -99,13 +99,13 @@ function chime(): void {
   }
 }
 
-const SIM_TEXT: Record<SimState, { status: string; hint: string; orb: string }> = {
-  off: { status: 'Tap the orb to start', hint: 'Turns the mic on. Then say "Alexa" and your question.', orb: 'Turn on voice' },
-  ready: { status: 'Ready — say "Alexa"', hint: 'The mic is on. Or tap the orb to talk straight away.', orb: 'Talk now without the wake word' },
-  listening: { status: 'Listening…', hint: "Go ahead, I'm listening.", orb: 'Cancel listening' },
-  processing: { status: 'Processing…', hint: '', orb: 'Working on it' },
-  speaking: { status: 'Speaking…', hint: 'Tap the orb to stop.', orb: 'Stop speaking' },
-  error: { status: 'Error — voice stopped', hint: '', orb: 'Try voice again' },
+const SIM_TEXT: Record<SimState, { status: string; orb: string }> = {
+  off: { status: 'Tap the mic or type a request', orb: 'Talk now' },
+  ready: { status: 'Say "Alexa" and your request', orb: 'Talk now' },
+  listening: { status: 'Listening…', orb: 'Stop listening' },
+  processing: { status: 'Thinking…', orb: 'Working on it' },
+  speaking: { status: 'Speaking…', orb: 'Stop speaking' },
+  error: { status: 'Error — voice stopped', orb: 'Try voice again' },
 };
 
 /** "MCP tool calls" above a reply: one row per call, tap to see what was sent and what came back. */
@@ -142,7 +142,7 @@ function toolCallList(actions: ChatReply['actions']): HTMLElement {
 
 export function chatView(): HTMLElement {
   const log = h('div', { class: 'chat-log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
-  const input = h('input', { type: 'text', maxlength: '500', 'aria-label': 'Message to FarmAssist', autocomplete: 'off', enterkeyhint: 'send', placeholder: 'Type a question or record…' });
+  const input = h('input', { type: 'text', maxlength: '500', 'aria-label': 'Message to FarmAssist', autocomplete: 'off', enterkeyhint: 'send', placeholder: 'Ask FarmAssist…' });
   const send = h('button', { type: 'submit', class: 'send', 'aria-label': 'Send', title: 'Send' }, icon('send'));
   const prefs = loadVoicePrefs();
   const voiceInput = speechInputSupported();
@@ -205,6 +205,7 @@ export function chatView(): HTMLElement {
     stopSpeaking();
     if (!spoken) input.value = '';
     simBox.classList.add('compact'); // like a voice assistant: the orb steps aside once the conversation starts
+    log.querySelector('.try')?.remove();
     bubble('me', h('p', {}, message), spoken ? h('span', { class: 'spoken', title: 'Spoken' }, '🎤') : null);
     const pending = thinking('Thinking…');
     setBusy(true);
@@ -228,31 +229,32 @@ export function chatView(): HTMLElement {
     }
   }
 
-  // ---- Alexa-style voice simulator
+  // ---- Alexa-style voice simulator (like Pantry Pilot's): big orb until the conversation starts, then a header row
   const orb = h('button', { type: 'button', class: 'orb', 'data-state': 'off' }, h('span', { class: 'orb-core' }, icon('mic')));
-  const status = h('p', { class: 'sim-status' });
-  const hint = h('p', { class: 'sim-hint', 'aria-live': 'polite' });
-  const micOff = h('button', { type: 'button', class: 'ghost sim-off', hidden: true }, icon('stop'), 'Mic off');
-  /** The round mic beside Send: the same as tapping the orb. */
+  const status = h('p', { class: 'sim-status', 'aria-live': 'polite' });
+  const hint = h('p', { class: 'sim-hint' });
+  /** The round mic beside Send: talk now, no wake word needed. Red with a stop square while listening. */
   const talk = h('button', { type: 'button', class: 'talk', 'data-state': 'off' }, icon('mic'));
-  const simBox = h('div', { class: 'sim' }, orb, h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style voice simulator'), status, hint));
+  const simBox = h('div', { class: 'sim' }, orb, h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style simulator'), status, hint));
+  /** Hands-free: after each reply the mic stays on and waits for "Alexa". Off by default: the mic is never on unasked. */
+  let handsFree = false;
   const render = (state: SimState, view: SimView) => {
     const text = SIM_TEXT[state];
     orb.dataset.state = state;
     orb.setAttribute('aria-label', text.orb);
     orb.title = text.orb;
     orb.disabled = state === 'processing';
-    status.textContent = state === 'listening' && view.confirming ? 'Listening for yes or no…' : text.status;
-    hint.textContent =
-      view.message ??
-      (view.transcript ? `“${view.transcript}”` : state === 'listening' && view.confirming ? 'Say "yes" to save it, or "no" to cancel.' : text.hint);
-    hint.classList.toggle('heard', Boolean(view.transcript));
+    // While listening, the words heard replace the status, as on a voice assistant's screen.
+    status.textContent = view.transcript ? `“${view.transcript}”` : state === 'listening' && view.confirming ? 'Listening for yes or no…' : text.status;
+    status.classList.toggle('heard', Boolean(view.transcript));
+    hint.textContent = view.message ?? (state === 'listening' && view.confirming && !view.transcript ? 'Say "yes" to save it, or "no" to cancel.' : '');
     hint.classList.toggle('err', Boolean(view.message));
-    micOff.hidden = !sim.isActive;
     talk.dataset.state = state;
     talk.disabled = state === 'processing';
     talk.setAttribute('aria-label', text.orb);
+    talk.title = text.orb;
     talk.replaceChildren(icon(state === 'listening' || state === 'speaking' ? 'stop' : 'mic'));
+    input.placeholder = state === 'listening' ? 'Listening…' : 'Ask FarmAssist…';
   };
   const sim = new VoiceSimulator({
     createRecognition,
@@ -264,21 +266,21 @@ export function chatView(): HTMLElement {
     chime,
     onChange: render,
     onIncomplete: (text) => {
-      bubble('bot', notice('info', 'I may have missed some words. Check the text below and press Send, or say "Alexa" and try again.'));
+      bubble('bot', notice('info', 'I may have missed some words. Check the text below and press Send, or tap the mic and try again.'));
       fillComposer?.(text);
     },
     onNotice: (text) => bubble('bot', notice('info', text)),
+    handsFree: () => handsFree,
   });
   stopVoice = () => sim.isActive && sim.stop();
-  orb.addEventListener('click', () => sim.tap());
-  talk.addEventListener('click', () => sim.tap());
-  micOff.addEventListener('click', () => sim.stop());
+  orb.addEventListener('click', () => sim.talk());
+  talk.addEventListener('click', () => sim.talk());
   render('off', {});
   if (!voiceInput) {
     orb.disabled = true;
     orb.setAttribute('aria-label', 'Voice input is not available in this browser');
-    status.textContent = 'Voice not available here';
-    hint.textContent = window.isSecureContext ? 'This browser cannot recognise speech. Try Chrome or Edge, or type below.' : 'Voice needs a secure (https) page. Type below.';
+    status.textContent = 'Type a request';
+    hint.textContent = window.isSecureContext ? 'Voice is not available in this browser. Try Chrome or Edge.' : 'Voice needs a secure (https) page.';
   }
 
   // Photo help: a sick animal or a crop problem. Any text in the box goes along as the farmer's note.
@@ -332,19 +334,24 @@ export function chatView(): HTMLElement {
     greet();
   };
 
-  const greet = () =>
-    bubble(
-      'bot',
-      h('p', {}, voiceInput ? 'Namaste! Tap the orb, then say "Alexa" and what you spent or did on the farm. You can also type, or send a photo if an animal or crop looks unwell.' : 'Namaste! Tell me what you spent or did on the farm, or ask about your records. Send a photo if an animal or crop looks unwell.'),
+  /** "Try saying" examples, shown until the conversation starts. Questions are sent; record examples only fill the box. */
+  const greet = () => {
+    log.appendChild(
       h(
         'div',
-        { class: 'chips', role: 'group', 'aria-label': 'Suggestions' },
+        { class: 'try', role: 'group', 'aria-label': 'Try saying' },
+        h('p', { class: 'try-title' }, 'Try saying'),
         ...SUGGESTIONS.map((s) =>
-          h('button', { class: `chip${s.send ? '' : ' chip-fill'}`, type: 'button', title: s.send ? 'Ask this' : 'Put this in the box to edit, then press Send', onclick: () => (s.send ? void submit(s.text) : fillComposer?.(s.text)) }, s.send ? null : icon('plus'), s.text),
+          h(
+            'button',
+            { class: `try-item${s.send ? '' : ' fill'}`, type: 'button', title: s.send ? 'Ask this' : 'Put this in the box to edit, then press Send', onclick: () => (s.send ? void submit(s.text) : fillComposer?.(s.text)) },
+            `“${s.text}”`,
+          ),
         ),
-        h('button', { class: 'chip chip-fill', type: 'button', onclick: () => camera.click() }, icon('camera'), 'Check a crop or animal photo'),
+        h('button', { class: 'try-item fill', type: 'button', onclick: () => camera.click() }, icon('camera'), 'Check a crop or animal photo'),
       ),
     );
+  };
 
   fillComposer = (text: string) => {
     input.value = text;
@@ -364,6 +371,18 @@ export function chatView(): HTMLElement {
     showSpeaker();
   });
   showSpeaker();
+  const handsFreeButton = h('button', { type: 'button', class: 'sim-toggle hands-free', 'aria-pressed': 'false' });
+  const showHandsFree = () => {
+    handsFreeButton.replaceChildren(icon(handsFree ? 'mic' : 'micoff'), handsFree ? 'Hands-free on' : 'Hands-free off');
+    handsFreeButton.setAttribute('aria-pressed', String(handsFree));
+    handsFreeButton.title = handsFree ? 'The mic stays on and waits for "Alexa"' : 'Turn on to keep the mic waiting for "Alexa"';
+  };
+  handsFreeButton.addEventListener('click', () => {
+    handsFree = !handsFree;
+    showHandsFree();
+    sim.handsFreeChanged(handsFree);
+  });
+  showHandsFree();
   const language = select('Voice language', VOICE_LANGUAGES, prefs.lang, (v) => {
     prefs.lang = v;
     saveVoicePrefs(prefs);
@@ -390,7 +409,7 @@ export function chatView(): HTMLElement {
       'div',
       { class: 'composer-wrap' },
       form,
-      h('div', { class: 'sim-controls' }, voiceInput || voiceOutput ? language : null, voiceOutput ? speaker : null, micOff),
+      h('div', { class: 'sim-controls' }, voiceOutput ? speaker : null, voiceInput || voiceOutput ? language : null, voiceInput ? handsFreeButton : null),
       h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.'),
     ),
   );
