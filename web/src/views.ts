@@ -5,19 +5,8 @@
 import { ApiError, readTool, sendChat, sendPhoto, type ChatReply } from './api.js';
 import { shrinkPhoto } from './photo.js';
 import { append, badge, clear, h, icon, label, notice, pageHeader, shortDate, spinner, type IconName } from './dom.js';
-import {
-  isEcho,
-  listen,
-  loadVoicePrefs,
-  saveVoicePrefs,
-  speak,
-  speechInputSupported,
-  speechOutputSupported,
-  stopSpeaking,
-  VOICE_LANGUAGES,
-  VoiceError,
-  type Listening,
-} from './voice.js';
+import { VoiceSimulator, type SimState, type SimView } from './simulator.js';
+import { createRecognition, loadVoicePrefs, saveVoicePrefs, speak, speechInputSupported, speechOutputSupported, stopSpeaking, VOICE_LANGUAGES } from './voice.js';
 
 const CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'other'];
 const ACTIVITY_TYPES = ['milking', 'vaccination', 'sowing', 'harvesting', 'irrigation', 'other'];
@@ -84,21 +73,51 @@ export function askAssistant(text: string): void {
 /** Wide screens show the assistant beside every screen instead of on its own tab. */
 export const DESKTOP_QUERY = '(min-width: 1024px)';
 
+/** Set by chatView: turns the voice simulator off (when the assistant leaves the screen, or on sign-out). */
+let stopVoice: (() => void) | undefined;
+export const pauseVoice = () => stopVoice?.();
+
+/** A short two-note tone after the wake word. Web Audio, so no file to load; silent where unsupported. */
+let audio: AudioContext | undefined;
+function chime(): void {
+  try {
+    audio ??= new AudioContext();
+    const now = audio.currentTime;
+    [660, 880].forEach((freq, i) => {
+      const osc = audio!.createOscillator();
+      const gain = audio!.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + i * 0.09);
+      gain.gain.exponentialRampToValueAtTime(0.15, now + i * 0.09 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.09 + 0.16);
+      osc.connect(gain).connect(audio!.destination);
+      osc.start(now + i * 0.09);
+      osc.stop(now + i * 0.09 + 0.18);
+    });
+  } catch {
+    /* no sound: the orb still shows Listening */
+  }
+}
+
+const SIM_TEXT: Record<SimState, { status: string; hint: string; orb: string }> = {
+  off: { status: 'Tap the orb to start', hint: 'Turns the mic on. Then say "Alexa" and your question.', orb: 'Turn on voice' },
+  ready: { status: 'Ready — say "Alexa"', hint: 'The mic is on. Or tap the orb to talk straight away.', orb: 'Talk now without the wake word' },
+  listening: { status: 'Listening…', hint: "Go ahead, I'm listening.", orb: 'Cancel listening' },
+  processing: { status: 'Processing…', hint: '', orb: 'Working on it' },
+  speaking: { status: 'Speaking…', hint: 'Tap the orb to stop.', orb: 'Stop speaking' },
+  error: { status: 'Error — voice stopped', hint: '', orb: 'Try voice again' },
+};
+
 export function chatView(): HTMLElement {
   const log = h('div', { class: 'chat-log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
-  const input = h('input', { type: 'text', maxlength: '500', 'aria-label': 'Message to FarmAssist', autocomplete: 'off', enterkeyhint: 'send' });
+  const input = h('input', { type: 'text', maxlength: '500', 'aria-label': 'Message to FarmAssist', autocomplete: 'off', enterkeyhint: 'send', placeholder: 'Type a question or record…' });
   const send = h('button', { type: 'submit', class: 'send', 'aria-label': 'Send', title: 'Send' }, icon('send'));
   const prefs = loadVoicePrefs();
-  let voiceInput = speechInputSupported();
-  const idlePlaceholder = voiceInput ? 'Type or speak…' : 'Ask or record…';
-  input.placeholder = idlePlaceholder;
-  const mic = h('button', { type: 'button', class: 'tool mic', 'aria-label': 'Speak', title: 'Speak' }, icon('mic'));
-  let listening: Listening | undefined;
+  const voiceInput = speechInputSupported();
+  const voiceOutput = speechOutputSupported();
   let openConfirmation: HTMLElement | undefined;
   /** True while a message or photo is with the server: stops double submissions from taps, chips and Enter. */
   let busy = false;
-  /** What the app last said aloud, to recognise its own voice coming back through the microphone. */
-  let lastSpoken = '';
   let conversationId: string | undefined;
   try {
     conversationId = sessionStorage.getItem(CONVERSATION_KEY) ?? undefined;
@@ -121,7 +140,7 @@ export function chatView(): HTMLElement {
     log.setAttribute('aria-busy', String(on));
   };
 
-  const showReply = (reply: ChatReply, spoken: boolean) => {
+  const showReply = (reply: ChatReply) => {
     // What the server did, in its own words; skipped when the reply already is that text (basic mode).
     const extra = reply.actions.filter((a) => a.text !== reply.reply);
     const actions = extra.length
@@ -130,34 +149,30 @@ export function chatView(): HTMLElement {
     const mode = reply.mode === 'fallback' ? h('div', { class: 'mode' }, reply.modelUnavailable ? 'Basic mode: the AI assistant is unavailable right now.' : 'Basic mode') : null;
     let buttons: HTMLElement | null = null;
     if (reply.awaitingConfirmation) {
-      const answer = (text: string) => void submit(text, true);
+      const answer = async (text: string) => {
+        sim.cancelCommand(); // the farmer answered by tapping, so stop waiting for a spoken yes/no
+        const next = await submit(text, true);
+        if (next) void sim.say(next.reply);
+      };
       buttons = openConfirmation = h(
         'div',
         { class: 'confirm' },
-        h('button', { type: 'button', class: 'primary', onclick: () => answer('yes') }, 'Yes, save'),
-        h('button', { type: 'button', class: 'secondary', onclick: () => answer('no') }, 'No'),
+        h('button', { type: 'button', class: 'primary', onclick: () => void answer('yes') }, 'Yes, save'),
+        h('button', { type: 'button', class: 'secondary', onclick: () => void answer('no') }, 'No'),
       );
     }
     bubble('bot', h('p', { class: 'lines' }, reply.reply), actions, buttons, mode);
-
-    if (spoken && prefs.speakReplies) {
-      lastSpoken = reply.reply;
-      void speak(reply.reply, prefs.lang).then(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 600)); // let the speaker fall silent before the mic opens
-        // Hands-free: after reading a confirmation question aloud, listen for the yes or no.
-        if (reply.awaitingConfirmation && voiceInput && !listening) startListening();
-      });
-    }
   };
 
-  async function submit(text: string, spoken = false) {
+  /** Sends one message and shows the reply. `spoken` marks voice: the backend then reads changes back first. */
+  async function submit(text: string, spoken = false): Promise<ChatReply | undefined> {
     const message = text.trim();
-    if (!message || busy) return;
+    if (!message || busy) return undefined;
     // Any next message answers (or drops) the pending confirmation, so its buttons stop working.
     openConfirmation?.querySelectorAll('button').forEach((b) => (b.disabled = true));
     openConfirmation = undefined;
     stopSpeaking();
-    input.value = '';
+    if (!spoken) input.value = '';
     bubble('me', h('p', {}, message), spoken ? h('span', { class: 'spoken', title: 'Spoken' }, '🎤') : null);
     const pending = thinking('Thinking…');
     setBusy(true);
@@ -170,55 +185,60 @@ export function chatView(): HTMLElement {
         /* the conversation just won't survive a reload */
       }
       pending.remove();
-      showReply(reply, spoken);
+      showReply(reply);
+      return reply;
     } catch (error) {
       pending.remove();
       bubble('bot', notice('error', errorText(error), () => void submit(message, spoken)));
+      return undefined;
     } finally {
       setBusy(false);
     }
   }
 
-  function setListening(on: boolean) {
-    mic.classList.toggle('listening', on);
-    mic.setAttribute('aria-label', on ? 'Stop listening' : 'Speak');
-    mic.replaceChildren(icon(on ? 'stop' : 'mic'));
-    input.placeholder = on ? 'Listening… speak now' : idlePlaceholder;
+  // ---- Alexa-style voice simulator
+  const orb = h('button', { type: 'button', class: 'orb', 'data-state': 'off' }, h('span', { class: 'orb-core' }, icon('mic')));
+  const status = h('p', { class: 'sim-status' });
+  const hint = h('p', { class: 'sim-hint', 'aria-live': 'polite' });
+  const micOff = h('button', { type: 'button', class: 'ghost sim-off', hidden: true }, icon('stop'), 'Mic off');
+  const render = (state: SimState, view: SimView) => {
+    const text = SIM_TEXT[state];
+    orb.dataset.state = state;
+    orb.setAttribute('aria-label', text.orb);
+    orb.title = text.orb;
+    orb.disabled = state === 'processing';
+    status.textContent = state === 'listening' && view.confirming ? 'Listening for yes or no…' : text.status;
+    hint.textContent =
+      view.message ??
+      (view.transcript ? `“${view.transcript}”` : state === 'listening' && view.confirming ? 'Say "yes" to save it, or "no" to cancel.' : text.hint);
+    hint.classList.toggle('heard', Boolean(view.transcript));
+    micOff.hidden = !sim.isActive;
+  };
+  const sim = new VoiceSimulator({
+    createRecognition,
+    lang: () => prefs.lang,
+    submit: (command) => submit(command, true),
+    speakEnabled: () => voiceOutput && prefs.speakReplies,
+    speak: (text) => speak(text, prefs.lang),
+    stopSpeaking,
+    chime,
+    onChange: render,
+    onIncomplete: (text) => {
+      bubble('bot', notice('info', 'I may have missed some words. Check the text below and press Send, or say "Alexa" and try again.'));
+      fillComposer?.(text);
+    },
+    onNotice: (text) => bubble('bot', notice('info', text)),
+  });
+  stopVoice = () => sim.isActive && sim.stop();
+  orb.addEventListener('click', () => sim.tap());
+  micOff.addEventListener('click', () => sim.stop());
+  render('off', {});
+  if (!voiceInput) {
+    orb.disabled = true;
+    orb.setAttribute('aria-label', 'Voice input is not available in this browser');
+    status.textContent = 'Voice not available here';
+    hint.textContent = window.isSecureContext ? 'This browser cannot recognise speech. Try Chrome or Edge, or type below.' : 'Voice needs a secure (https) page. Type below.';
   }
-
-  function startListening() {
-    stopSpeaking();
-    const session = listen(prefs.lang, (heard) => (input.value = heard));
-    listening = session;
-    setListening(true);
-    session.result
-      .then((heard) => {
-        // The words heard are shown in the chat; a spoken change is still read back before anything is saved.
-        if (!heard) return;
-        if (isEcho(heard, lastSpoken)) {
-          // The phone's speaker came back through the mic (heard live, 2026-10-16). Never send that as the farmer's words.
-          input.value = '';
-          bubble('bot', notice('info', 'That sounded like my own voice. Please tap the mic and speak again, or type.'));
-          return;
-        }
-        void submit(heard, true);
-      })
-      .catch((error: unknown) => {
-        input.value = '';
-        const voiceError = error instanceof VoiceError ? error : new VoiceError('Voice input stopped. Please try again, or type instead.');
-        bubble('bot', notice('error', voiceError.message));
-        if (voiceError.permanent) {
-          voiceInput = false;
-          mic.remove();
-        }
-      })
-      .finally(() => {
-        listening = undefined;
-        setListening(false);
-      });
-  }
-
-  mic.addEventListener('click', () => (listening ? listening.stop() : startListening()));
 
   // Photo help: a sick animal or a crop problem. Any text in the box goes along as the farmer's note.
   const photoInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'hidden-file', 'aria-label': 'Photo', tabindex: '-1' });
@@ -231,6 +251,7 @@ export function chatView(): HTMLElement {
     const note = input.value.trim();
     input.value = '';
     stopSpeaking();
+    sim.cancelCommand();
     let shrunk: { base64: string; previewUrl: string };
     try {
       shrunk = await shrinkPhoto(file);
@@ -246,7 +267,7 @@ export function chatView(): HTMLElement {
       pending.remove();
       const box = bubble('bot', answer.urgent ? badge('Needs attention', 'danger') : null, h('p', { class: 'lines' }, answer.reply));
       if (answer.urgent) box.classList.add('urgent');
-      if (prefs.speakReplies && lastSpoken) void speak(answer.reply, prefs.lang); // only for farmers already using voice
+      if (sim.isActive) void sim.say(answer.reply); // read aloud only for a farmer already using voice
     } catch (error) {
       pending.remove();
       bubble('bot', notice('error', errorText(error)));
@@ -258,6 +279,7 @@ export function chatView(): HTMLElement {
   const newChat = () => {
     if (busy) return;
     stopSpeaking();
+    sim.cancelCommand();
     conversationId = undefined;
     try {
       sessionStorage.removeItem(CONVERSATION_KEY);
@@ -271,7 +293,7 @@ export function chatView(): HTMLElement {
   const greet = () =>
     bubble(
       'bot',
-      h('p', {}, voiceInput ? 'Namaste! Tap the mic and tell me what you spent or did on the farm, or type it. Send a photo if an animal or crop looks unwell.' : 'Namaste! Tell me what you spent or did on the farm, or ask about your records. Send a photo if an animal or crop looks unwell.'),
+      h('p', {}, voiceInput ? 'Namaste! Tap the orb, then say "Alexa" and what you spent or did on the farm. You can also type, or send a photo if an animal or crop looks unwell.' : 'Namaste! Tell me what you spent or did on the farm, or ask about your records. Send a photo if an animal or crop looks unwell.'),
       h(
         'div',
         { class: 'chips', role: 'group', 'aria-label': 'Suggestions' },
@@ -288,32 +310,28 @@ export function chatView(): HTMLElement {
     input.setSelectionRange(text.length, text.length);
   };
 
-  const voiceSettings =
-    voiceInput || speechOutputSupported()
-      ? h(
-          'div',
-          { class: 'voice-settings' },
-          select('Voice language', VOICE_LANGUAGES, prefs.lang, (v) => ((prefs.lang = v), saveVoicePrefs(prefs))),
-          h(
-            'label',
-            { class: 'toggle' },
-            h('input', {
-              type: 'checkbox',
-              role: 'switch',
-              checked: prefs.speakReplies,
-              onchange: (e: Event) => {
-                prefs.speakReplies = (e.target as HTMLInputElement).checked;
-                saveVoicePrefs(prefs);
-                if (!prefs.speakReplies) stopSpeaking();
-              },
-            }),
-            'Read replies aloud',
-          ),
-        )
-      : null;
+  const speaker = h('button', { type: 'button', class: 'sim-toggle', 'aria-pressed': String(prefs.speakReplies) });
+  const showSpeaker = () => {
+    speaker.replaceChildren(icon(prefs.speakReplies ? 'volume' : 'mute'), prefs.speakReplies ? 'Voice replies on' : 'Voice replies off');
+    speaker.setAttribute('aria-pressed', String(prefs.speakReplies));
+  };
+  speaker.addEventListener('click', () => {
+    prefs.speakReplies = !prefs.speakReplies;
+    saveVoicePrefs(prefs);
+    if (!prefs.speakReplies) stopSpeaking();
+    showSpeaker();
+  });
+  showSpeaker();
+  const language = select('Voice language', VOICE_LANGUAGES, prefs.lang, (v) => {
+    prefs.lang = v;
+    saveVoicePrefs(prefs);
+    if (sim.isActive) {
+      sim.stop(); // a recogniser keeps the language it started with
+      sim.start();
+    }
+  });
 
-  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), void submit(input.value)) }, camera, voiceInput ? mic : null, photoInput, input, send);
-  const hint = voiceInput ? null : h('p', { class: 'composer-hint' }, 'Voice input is not available in this browser. Typing and photos still work.');
+  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), sim.cancelCommand(), void submit(input.value)) }, camera, photoInput, input, send);
   greet();
   return h(
     'section',
@@ -324,9 +342,15 @@ export function chatView(): HTMLElement {
       h('div', { class: 'assistant-title' }, h('span', { class: 'assistant-mark' }, icon('logo')), h('div', {}, h('strong', {}, 'Ask FarmAssist'), h('span', {}, 'Every number checked against your records'))),
       h('button', { class: 'ghost', type: 'button', onclick: newChat }, 'New chat'),
     ),
-    voiceSettings,
+    h(
+      'div',
+      { class: 'sim' },
+      orb,
+      h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style voice simulator'), status, hint),
+      h('div', { class: 'sim-controls' }, voiceInput || voiceOutput ? language : null, voiceOutput ? speaker : null, micOff),
+    ),
     log,
-    h('div', { class: 'composer-wrap' }, form, hint),
+    h('div', { class: 'composer-wrap' }, form, h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.')),
   );
 }
 

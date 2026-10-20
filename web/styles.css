@@ -309,10 +309,48 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .assistant button.ghost:hover { background: var(--ink-2); }
 .assistant :focus-visible { outline-color: var(--mint); }
 
-.voice-settings { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; padding: 8px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--ink-3); }
-.voice-settings select { min-height: 38px; padding: 4px 10px; width: auto; background: var(--ink-2); border-color: var(--ink-3); color: var(--on-ink); }
-.toggle { display: flex; gap: 8px; align-items: center; color: var(--on-ink-muted); cursor: pointer; min-height: 38px; }
-.toggle input { width: 20px; min-height: 20px; height: 20px; accent-color: var(--mint); margin: 0; }
+/* Alexa-style simulator: the orb shows what the mic is doing. Colour is never the only signal: the status text says it too. */
+.sim { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--ink-3); }
+.orb {
+  --ring: #3a4a52; --core: #12171a; --glow: transparent;
+  position: relative; grid-row: span 2; width: 84px; height: 84px; min-height: 0; padding: 0; border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, #1b2226, var(--core) 70%);
+  border: 5px solid var(--ring); box-shadow: 0 0 0 0 var(--glow), inset 0 0 18px rgba(0, 0, 0, 0.6);
+  color: var(--on-ink-muted); display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color 0.2s, box-shadow 0.2s, color 0.2s;
+}
+.orb .orb-core .ico { width: 28px; height: 28px; }
+.orb:disabled { cursor: default; opacity: 0.6; }
+.orb[data-state='ready'] { --ring: #1f6f8b; color: #7fd1ea; animation: breathe 3s ease-in-out infinite; }
+.orb[data-state='listening'] { --ring: #34c4f0; --glow: rgba(52, 196, 240, 0.45); color: #fff; animation: listen 1.1s ease-in-out infinite; }
+.orb[data-state='processing'] { --ring: #34c4f0; border-color: #1f6f8b #34c4f0 #1f6f8b #34c4f0; color: #7fd1ea; animation: spin 1s linear infinite; opacity: 1; }
+.orb[data-state='processing'] .orb-core { animation: spin 1s linear infinite reverse; }
+.orb[data-state='speaking'] { --ring: var(--mint); --glow: rgba(143, 211, 160, 0.4); color: var(--mint); animation: listen 1.6s ease-in-out infinite; }
+.orb[data-state='error'] { --ring: #c0584a; color: #ffb4ab; }
+@keyframes breathe { 0%, 100% { box-shadow: 0 0 0 0 rgba(52, 196, 240, 0.0), inset 0 0 18px rgba(0, 0, 0, 0.6); } 50% { box-shadow: 0 0 14px 2px rgba(52, 196, 240, 0.25), inset 0 0 18px rgba(0, 0, 0, 0.6); } }
+@keyframes listen { 0%, 100% { box-shadow: 0 0 0 0 var(--glow), inset 0 0 18px rgba(0, 0, 0, 0.6); } 50% { box-shadow: 0 0 0 10px transparent, 0 0 24px 6px var(--glow), inset 0 0 18px rgba(0, 0, 0, 0.6); } }
+.sim-text { min-width: 0; }
+.sim-kicker { margin: 0; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--on-ink-muted); }
+.sim-status { margin: 2px 0 0; font-size: 1.1rem; font-weight: 700; }
+.sim-hint { margin: 2px 0 0; font-size: 0.88rem; color: var(--on-ink-muted); overflow-wrap: anywhere; }
+.sim-hint.heard { color: var(--on-ink); font-style: italic; }
+.sim-controls { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.sim-controls select { min-height: 36px; padding: 4px 10px; width: auto; background: var(--ink-2); border-color: var(--ink-3); color: var(--on-ink); font-size: 0.86rem; }
+.sim-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 1px solid var(--ink-3); color: var(--on-ink); font-size: 0.84rem; font-weight: 600; }
+.sim-toggle[aria-pressed='false'] { color: var(--on-ink-muted); }
+.sim-toggle .ico, .sim-off .ico { width: 16px; height: 16px; }
+.assistant button.sim-off { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; color: #ffb4ab; border-color: #5a3330; }
+.assistant button.sim-off[hidden] { display: none; }
+@media (min-width: 1024px) {
+  .side .sim { grid-template-columns: 1fr; justify-items: center; text-align: center; padding: 18px 16px 14px; }
+  .side .orb { grid-row: auto; width: 120px; height: 120px; border-width: 6px; }
+  .side .orb .orb-core .ico { width: 36px; height: 36px; }
+  .side .sim-controls { grid-column: 1; justify-content: center; }
+}
+@media (max-width: 380px) {
+  .orb { width: 68px; height: 68px; }
+  .sim-controls { grid-column: 1 / -1; }
+}
 
 .chat-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; padding: 16px; scrollbar-color: var(--ink-3) transparent; }
 .bubble { max-width: 88%; padding: 10px 14px; border-radius: 16px; overflow-wrap: anywhere; }
@@ -363,13 +401,11 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .composer .tool { width: 44px; padding: 0; border-radius: 12px; color: var(--on-ink); display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .composer .tool:hover:not(:disabled) { background: var(--ink-3); }
 .composer .send { width: 44px; padding: 0; border-radius: 12px; background: var(--mint); color: #0d1a10; display: inline-flex; align-items: center; justify-content: center; flex: none; }
-.mic.listening { background: #c62828; color: #fff; animation: pulse 1.2s ease-in-out infinite; }
-@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(198, 40, 40, 0.5); } 50% { box-shadow: 0 0 0 8px rgba(198, 40, 40, 0); } }
 .hidden-file { display: none; }
 .composer-hint { color: var(--on-ink-muted); font-size: 0.8rem; margin: 6px 4px 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .mic.listening, .dots i, .spin { animation: none; }
+  .orb, .orb .orb-core, .dots i, .spin { animation: none !important; }
 }
 
 /* Shown only by the local development server */

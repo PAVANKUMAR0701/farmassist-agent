@@ -1,7 +1,7 @@
 /**
  * Voice in and out with the browser's Web Speech API (no extra service, no keys).
- * Speech input works in Chrome (Android and desktop), Edge and Safari; elsewhere the mic button is hidden
- * and typing still works. Spoken replies use the device's own voices.
+ * Speech input works in Chrome (Android and desktop), Edge and Safari; elsewhere the voice orb is disabled
+ * and typing still works. The Alexa-style listening loop is in simulator.ts. Spoken replies use the device's own voices.
  */
 
 export const VOICE_LANGUAGES: Array<[string, string]> = [
@@ -10,12 +10,12 @@ export const VOICE_LANGUAGES: Array<[string, string]> = [
   ['ta-IN', 'தமிழ்'],
 ];
 
-// Minimal typings: SpeechRecognition is not in TypeScript's DOM library.
-interface RecognitionResultEvent {
+/// Minimal typings: SpeechRecognition is not in TypeScript's DOM library.
+export interface RecognitionResultEvent {
   resultIndex: number;
   results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
 }
-interface Recognition {
+export interface Recognition {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
@@ -37,6 +37,12 @@ function recognitionClass(): RecognitionConstructor | undefined {
 export const speechInputSupported = () => recognitionClass() !== undefined && window.isSecureContext;
 export const speechOutputSupported = () => 'speechSynthesis' in window;
 
+/** A new browser recogniser, or undefined where the browser has none. */
+export function createRecognition(): Recognition | undefined {
+  const Ctor = recognitionClass();
+  return Ctor ? new Ctor() : undefined;
+}
+
 export class VoiceError extends Error {
   /** True when retrying will not help (permission blocked, no microphone): the UI should stop offering voice. */
   constructor(
@@ -47,63 +53,72 @@ export class VoiceError extends Error {
   }
 }
 
-const ERROR_MESSAGES: Record<string, [string, boolean]> = {
+export const ERROR_MESSAGES: Record<string, [string, boolean]> = {
   'not-allowed': ['Microphone access is blocked. Allow the microphone for this site in your browser settings, or type instead.', true],
   'service-not-allowed': ['Voice input is turned off in this browser. Please type instead.', true],
   'audio-capture': ['No microphone was found. Please type instead.', true],
   'no-speech': ["I didn't hear anything. Tap the mic and speak, or type instead.", false],
   network: ['Voice input needs an internet connection. Please check it, or type instead.', false],
   'language-not-supported': ['This language is not available for voice on this device. Try English, or type instead.', false],
+  'start-failed': ['Voice input could not start. Tap the orb to try again, or type instead.', false],
+  'restart-loop': ['Voice input keeps stopping in this browser. Tap the orb to try again, or type instead.', false],
 };
 
-export interface Listening {
-  /** Resolves with the final transcript (possibly empty when stopped early); rejects with VoiceError. */
-  result: Promise<string>;
-  stop(): void;
+export function voiceError(code: string): VoiceError {
+  const [message, permanent] = ERROR_MESSAGES[code] ?? ['Voice input stopped unexpectedly. Please try again, or type instead.', false];
+  return new VoiceError(message, permanent);
 }
 
-/** Starts listening once. `onInterim` receives the words heard so far, to show them while the farmer speaks. */
-export function listen(lang: string, onInterim: (text: string) => void): Listening {
-  const Ctor = recognitionClass();
-  if (!Ctor) return { result: Promise.reject(new VoiceError('Voice input is not available in this browser. Please type instead.', true)), stop: () => {} };
-  const recognition = new Ctor();
-  recognition.lang = lang;
-  recognition.interimResults = true;
-  recognition.continuous = false;
-  recognition.maxAlternatives = 1;
-
-  let finalText = '';
-  let failure: VoiceError | undefined;
-  const result = new Promise<string>((resolve, reject) => {
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const r = event.results[i]!;
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
-      }
-      onInterim((finalText + interim).trim());
-    };
-    recognition.onerror = (event) => {
-      if (event.error === 'aborted') return;
-      const [message, permanent] = ERROR_MESSAGES[event.error] ?? ['Voice input stopped unexpectedly. Please try again, or type instead.', false];
-      failure = new VoiceError(message, permanent);
-    };
-    recognition.onend = () => (failure ? reject(failure) : resolve(finalText.trim()));
-  });
-  try {
-    recognition.start();
-  } catch {
-    return { result: Promise.reject(new VoiceError('Voice input could not start. Tap the mic again, or type instead.')), stop: () => {} };
+/**
+ * Joins recognised segments into one transcript. Android Chrome repeats earlier words in later final results
+ * ("how much", "how much did I spend"), so a segment that already contains the text so far replaces it.
+ */
+export function joinSegments(segments: string[]): string {
+  let text = '';
+  for (const raw of segments) {
+    const seg = raw.trim();
+    if (!seg) continue;
+    const a = text.toLowerCase();
+    const s = seg.toLowerCase();
+    if (!text || s.startsWith(a)) text = seg;
+    else if (!a.endsWith(s)) text = `${text} ${seg}`;
   }
-  return { result, stop: () => recognition.stop() };
+  return text;
+}
+
+/** Final and still-changing (interim) text of one recognition session, rebuilt from all its results. */
+export function readResults(event: RecognitionResultEvent): { final: string; interim: string } {
+  const finals: string[] = [];
+  const interims: string[] = [];
+  for (let i = 0; i < event.results.length; i++) {
+    const r = event.results[i]!;
+    (r.isFinal ? finals : interims).push(r[0].transcript);
+  }
+  return { final: joinSegments(finals), interim: joinSegments(interims) };
+}
+
+/** Spellings recognisers produce for the wake word, in English, Hindi and Tamil. */
+export const WAKE_WORDS = ['alexa', 'alexaa', 'alexia', 'elexa', 'aleksa', 'एलेक्सा', 'अलेक्सा', 'ऐलेक्सा', 'அலெக்சா', 'அலெக்ஸா', 'அலெக்ஸ்சா'];
+const bareWord = (token: string) => token.toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, '');
+
+/** Finds the wake word: `{ wake: true, command }` with the words said after it ("Alexa, how much…" -> "how much…"). */
+export function extractCommand(text: string): { wake: boolean; command: string } {
+  const tokens = text.trim().split(/\s+/);
+  const at = tokens.findIndex((t) => WAKE_WORDS.includes(bareWord(t)));
+  if (at < 0) return { wake: false, command: text.trim() };
+  const command = tokens
+    .slice(at + 1)
+    .join(' ')
+    .replace(/^[\s,.!?:;।-]+/u, '')
+    .trim();
+  return { wake: true, command };
 }
 
 const words = (text: string) =>
   text
     .toLowerCase()
     .replace(/(\d),(?=\d)/g, '$1') // "2,500" (spoken text) and "2500" (recogniser) are the same
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ') // \p{M} keeps Hindi and Tamil vowel signs inside their words
     .trim();
 
 /**
@@ -137,8 +152,12 @@ export function speak(text: string, lang: string): Promise<void> {
   utterance.voice = voices.find((v) => v.lang === lang) ?? voices.find((v) => v.lang.startsWith(lang.slice(0, 2))) ?? null;
   utterance.rate = 0.95;
   return new Promise((resolve) => {
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
+    // Chrome sometimes never fires onend (long text, no voice installed); never wait forever, or the
+    // voice simulator would stay in Speaking with the mic closed. About 12 characters a second, plus slack.
+    const limit = setTimeout(() => (synth.cancel(), resolve()), 4000 + utterance.text.length * 90);
+    const done = () => (clearTimeout(limit), resolve());
+    utterance.onend = done;
+    utterance.onerror = done;
     synth.speak(utterance);
   });
 }

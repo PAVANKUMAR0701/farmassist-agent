@@ -5,7 +5,7 @@
 import { ApiError, displayName, isLocalDevServer, isSignedIn, loadConfig, setNewPassword, setSignedOutHandler, signIn, signOut } from './api.js';
 import { clear, h, icon, notice, type IconName } from './dom.js';
 import { farmView } from './farm.js';
-import { activitiesView, chatView, DESKTOP_QUERY, expensesView, todayView } from './views.js';
+import { activitiesView, chatView, DESKTOP_QUERY, expensesView, pauseVoice, todayView } from './views.js';
 
 const ROUTES: Record<string, { title: string; icon: IconName; view: () => HTMLElement }> = {
   chat: { title: 'Ask', icon: 'chat', view: todayView },
@@ -165,6 +165,8 @@ function render(message?: string): void {
   if (!isSignedIn()) assistant = undefined; // a new sign-in starts a fresh assistant
   root.appendChild(isSignedIn() ? shell() : signInView(message));
   if (log?.isConnected) log.scrollTop = scrolled;
+  // Never leave the microphone on behind a screen that does not show the assistant (or after sign-out).
+  if (!assistant?.isConnected) pauseVoice();
   document.title = isSignedIn() ? `${ROUTES[currentRoute()]!.title} · FarmAssist Agent` : 'Sign in · FarmAssist Agent';
 }
 

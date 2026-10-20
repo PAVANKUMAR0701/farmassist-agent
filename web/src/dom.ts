@@ -57,6 +57,8 @@ const ICONS = {
   milk: '<path d="M9 3h6v3l2 4v11H7V10l2-4Z"/><path d="M7 13h10"/>',
   sprout: '<path d="M12 20v-8"/><path d="M12 12c-4 0-6-2-6-6 4 0 6 2 6 6Z"/><path d="M12 14c0-3 2-5 6-5 0 3-2 5-6 5Z"/>',
   cow: '<path d="M6 8c-2 0-3-1-3-3 2 0 3 1 3 3Z"/><path d="M18 8c2 0 3-1 3-3-2 0-3 1-3 3Z"/><path d="M6 8h12v6a6 6 0 0 1-12 0Z"/><circle cx="10" cy="15" r=".6"/><circle cx="14" cy="15" r=".6"/>',
+  volume: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/>',
+  mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 10 4 4M21 10l-4 4"/>',
   logout: '<path d="M10 4H5v16h5"/><path d="M14 8l4 4-4 4"/><path d="M18 12H9"/>',
 } as const;
 export type IconName = keyof typeof ICONS;
