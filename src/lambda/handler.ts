@@ -10,6 +10,7 @@ import type { LambdaFunctionURLEvent } from 'aws-lambda';
 import { handleMcpRequest, type McpHttpConfig } from '../mcp/http.js';
 import { DynamoLedgerRepository } from '../repositories/dynamodb-ledger-repository.js';
 import { DynamoRecordStore } from '../repositories/dynamodb-record-store.js';
+import { CognitoUserTokenVerifier } from '../auth/cognito-farm.js';
 import { createNarratorFromEnv } from '../services/insight-narrator.js';
 import { toLambdaResult, toWebRequest, type FunctionUrlResult } from './function-url.js';
 
@@ -38,6 +39,10 @@ async function loadConfig(): Promise<McpHttpConfig> {
       .map((o) => o.trim())
       .filter(Boolean),
     apiTokens: [{ token, farmId: requiredEnv('FARMASSIST_DEMO_FARM_ID'), clientId: 'demo-client' }],
+    // Web users who signed up have their own farm: the chat backend calls with the user's own ID token.
+    ...(process.env.USER_POOL_ID && process.env.USER_POOL_CLIENT_ID
+      ? { userTokens: new CognitoUserTokenVerifier(process.env.USER_POOL_ID, process.env.USER_POOL_CLIENT_ID) }
+      : {}),
     deps: {
       ledger: new DynamoLedgerRepository(client, requiredEnv('FARMASSIST_TABLE_NAME')),
       records: new DynamoRecordStore(client, requiredEnv('FARMASSIST_TABLE_NAME')),

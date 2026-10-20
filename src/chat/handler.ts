@@ -34,10 +34,25 @@ async function loadDeps(): Promise<ChatAppDeps> {
   const mcpToken = parameter.Parameter?.Value;
   if (!mcpToken) throw new Error('The MCP token parameter is empty');
 
-  // The MCP token belongs to one farm (see src/auth/bearer.ts), so only users of that farm get a connection.
+  // The MCP service token belongs to one farm (see src/auth/bearer.ts); users of other farms use their own token.
   const mcpFarmId = requiredEnv('FARMASSIST_DEMO_FARM_ID');
   const mcpUrl = requiredEnv('FARMASSIST_MCP_URL');
   let mcpClient: FarmMcpClient | undefined; // reused by every request this instance serves
+  // Users with their own farm reach MCP with their own ID token; one connection per token (tokens last an hour).
+  const userClients = new Map<string, FarmMcpClient>();
+  const userClient = (token: string) => {
+    let client = userClients.get(token);
+    if (!client) {
+      if (userClients.size >= 100) {
+        const oldest = userClients.keys().next().value!;
+        void userClients.get(oldest)?.close().catch(() => {});
+        userClients.delete(oldest);
+      }
+      client = new FarmMcpClient({ url: mcpUrl, token });
+      userClients.set(token, client);
+    }
+    return client;
+  };
   const region = process.env.AWS_REGION ?? 'ap-south-1';
   const clientId = requiredEnv('USER_POOL_CLIENT_ID');
 
@@ -47,7 +62,8 @@ async function loadDeps(): Promise<ChatAppDeps> {
       DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } }),
       requiredEnv('FARMASSIST_TABLE_NAME'),
     ),
-    toolsFor: (farmId) => (farmId === mcpFarmId ? (mcpClient ??= new FarmMcpClient({ url: mcpUrl, token: mcpToken })) : undefined),
+    toolsFor: (farmId, userToken) =>
+      farmId === mcpFarmId ? (mcpClient ??= new FarmMcpClient({ url: mcpUrl, token: mcpToken })) : userToken ? userClient(userToken) : undefined,
     model: createAgentModelFromEnv(),
     vision: createVisionModelFromEnv(),
     // Embeddings only when switched on (KNOWLEDGE_EMBEDDINGS=nova) and an index was built; keyword search otherwise.

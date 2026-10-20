@@ -1,7 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FarmMcpClient, type FarmToolClient } from '../../src/agent/mcp-client.js';
 import { handleChatRequest, type ChatAppDeps } from '../../src/chat/app.js';
 import { CognitoAuthenticator, type ChatAuthenticator, type ChatUser } from '../../src/chat/auth.js';
@@ -120,6 +120,13 @@ describe('POST /api/chat', () => {
     const res = await post(deps, '/api/chat', { message: 'spent 2500 on feed' });
     expect(res.status).toBe(502);
     expect((await res.json()).error).toContain('Nothing was changed');
+  });
+
+  it("hands the signed-in user's own token to the MCP connection for their farm (signed-up users)", async () => {
+    const toolsFor = vi.fn((_farmId: string, _userToken?: string) => undefined);
+    const { deps } = setup({ toolsFor });
+    await post(deps, '/api/read', { tool: 'list_crops', args: {} }, 'token-other-farm');
+    expect(toolsFor).toHaveBeenCalledWith('farm-without-mcp', 'token-other-farm');
   });
 });
 

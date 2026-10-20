@@ -1,5 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { authenticateBearer, type ApiTokenGrant } from '../auth/bearer.js';
+import type { UserTokenVerifier } from '../auth/cognito-farm.js';
 import { createFarmServer, type FarmServerDeps } from './server.js';
 
 export interface McpHttpConfig {
@@ -7,6 +8,8 @@ export interface McpHttpConfig {
   allowedOrigins: readonly string[];
   /** Bearer tokens accepted by the server, each bound to one farm. */
   apiTokens: readonly ApiTokenGrant[];
+  /** Optional: also accept a signed-in web user's own token (Cognito ID token); the farm comes from its claims. */
+  userTokens?: UserTokenVerifier;
   deps: FarmServerDeps;
 }
 
@@ -37,7 +40,11 @@ export async function handleMcpRequest(request: Request, config: McpHttpConfig):
   }
 
   // 401 without a WWW-Authenticate header: we have no OAuth metadata to point clients at (static bearer tokens only).
-  const authInfo = authenticateBearer(request.headers.get('authorization'), config.apiTokens);
+  const authorization = request.headers.get('authorization');
+  const userToken = /^Bearer\s+(\S+)$/i.exec(authorization ?? '')?.[1];
+  const authInfo =
+    authenticateBearer(authorization, config.apiTokens) ??
+    (config.userTokens && userToken?.includes('.') ? await config.userTokens.verify(userToken) : undefined);
   if (!authInfo) {
     return jsonRpcError(401, 'Unauthorized: missing or invalid bearer token');
   }

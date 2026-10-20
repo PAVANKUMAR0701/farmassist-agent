@@ -120,7 +120,9 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
 
    Without the Bedrock parameters, everything still deploys and runs in basic mode. Creating the Bedrock role is covered in [docs/bedrock-access.md](docs/bedrock-access.md).
 
-3. **Sign-in user.** `UserPoolId` is a stack output. Choose your own temporary password; it is replaced at first sign-in:
+3. **Users.** Anyone can **create an account** in the web app (Cognito sign-up with a 6-digit email code). A signed-up user gets a private farm of their own (`u-<Cognito user id>`): the chat backend calls the MCP server with that user's own ID token, and the MCP server verifies it and takes the farm from it (`src/auth/cognito-farm.ts`). Cognito's built-in email sender allows about 50 emails a day.
+
+   To give someone the shared demo farm instead, create them as an admin. `UserPoolId` is a stack output. Choose your own temporary password; it is replaced at first sign-in:
 
    ```bash
    aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <name> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=demo-farm --temporary-password "<temporary password>" --message-action SUPPRESS

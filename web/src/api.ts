@@ -21,6 +21,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Cognito's error name (e.g. "UserNotConfirmedException"), when the error came from Cognito. */
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -94,7 +96,11 @@ interface AuthResult {
   ExpiresIn: number;
 }
 
-export type SignInStep = { done: true } | { done: false; newPasswordRequired: true; challengeSession: string };
+export type SignInStep =
+  | { done: true }
+  | { done: false; newPasswordRequired: true; challengeSession: string }
+  /** Signed up but the email code was never entered: confirm, then sign in again. */
+  | { done: false; confirmRequired: true };
 
 async function cognito(target: string, body: object): Promise<Record<string, unknown>> {
   const cfg = await loadConfig();
@@ -107,14 +113,26 @@ async function cognito(target: string, body: object): Promise<Record<string, unk
   if (!res.ok) {
     const type = String(data.__type ?? '');
     const message =
-      type.includes('NotAuthorized') || type.includes('UserNotFound')
-        ? 'Wrong username or password.'
-        : type.includes('InvalidPassword')
-          ? String(data.message ?? 'That password does not meet the rules.')
-          : type.includes('TooManyRequests') || type.includes('LimitExceeded')
-            ? 'Too many attempts. Wait a minute and try again.'
-            : 'Sign-in failed. Please try again.';
-    throw new ApiError(res.status, message);
+      type.includes('UserNotConfirmed')
+        ? 'Please confirm your email first.'
+        : type.includes('NotAuthorized') || type.includes('UserNotFound')
+          ? 'Wrong username or password.'
+          : type.includes('UsernameExists')
+            ? 'That username is already taken. Please choose another one.'
+            : type.includes('InvalidPassword')
+              ? 'The password needs at least 8 characters, with a small letter and a number.'
+              : type.includes('CodeMismatch')
+                ? 'That code is not right. Check the email and try again.'
+                : type.includes('ExpiredCode')
+                  ? 'That code has expired. Tap "Send a new code".'
+                  : type.includes('CodeDeliveryFailure')
+                    ? 'The code email could not be sent. Check the email address.'
+                    : type.includes('TooManyRequests') || type.includes('LimitExceeded') || type.includes('TooManyFailedAttempts')
+                      ? 'Too many attempts. Wait a few minutes and try again.'
+                      : type.includes('InvalidParameter')
+                        ? 'Please check the details: the username can use letters and numbers, and the email must be valid.'
+                        : 'Something went wrong. Please try again.';
+    throw new ApiError(res.status, message, type.replace(/^.*#/, ''));
   }
   return data;
 }
@@ -134,11 +152,17 @@ export async function signIn(username: string, password: string): Promise<SignIn
     writeSession({ idToken: 'dev-local', expiresAt: Number.MAX_SAFE_INTEGER, username: username || 'dev' });
     return { done: true };
   }
-  const data = await cognito('InitiateAuth', {
-    AuthFlow: 'USER_PASSWORD_AUTH',
-    ClientId: cfg.userPoolClientId,
-    AuthParameters: { USERNAME: username, PASSWORD: password },
-  });
+  let data: Record<string, unknown>;
+  try {
+    data = await cognito('InitiateAuth', {
+      AuthFlow: 'USER_PASSWORD_AUTH',
+      ClientId: cfg.userPoolClientId,
+      AuthParameters: { USERNAME: username, PASSWORD: password },
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 'UserNotConfirmedException') return { done: false, confirmRequired: true };
+    throw error;
+  }
   if (data.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
     return { done: false, newPasswordRequired: true, challengeSession: String(data.Session) };
   }
@@ -156,6 +180,43 @@ export async function setNewPassword(username: string, newPassword: string, chal
     ChallengeResponses: { USERNAME: username, NEW_PASSWORD: newPassword },
   });
   storeAuthResult(data.AuthenticationResult as AuthResult, username);
+}
+
+// ---- Self sign-up: Cognito emails a 6-digit code; the new account gets its own private farm. ----
+
+/** Where the code was sent, masked by Cognito (e.g. "p***@g***"). */
+export interface CodeDelivery {
+  destination?: string;
+}
+
+export async function signUp(username: string, password: string, email: string, name: string): Promise<CodeDelivery> {
+  const cfg = await loadConfig();
+  if (cfg.auth === 'dev') return { destination: email }; // the local server has no Cognito: any code works
+  const data = await cognito('SignUp', {
+    ClientId: cfg.userPoolClientId,
+    Username: username,
+    Password: password,
+    UserAttributes: [
+      { Name: 'email', Value: email },
+      { Name: 'name', Value: name },
+    ],
+  });
+  const details = data.CodeDeliveryDetails as { Destination?: string } | undefined;
+  return details?.Destination ? { destination: details.Destination } : {};
+}
+
+export async function confirmSignUp(username: string, code: string): Promise<void> {
+  const cfg = await loadConfig();
+  if (cfg.auth === 'dev') return;
+  await cognito('ConfirmSignUp', { ClientId: cfg.userPoolClientId, Username: username, ConfirmationCode: code });
+}
+
+export async function resendCode(username: string): Promise<CodeDelivery> {
+  const cfg = await loadConfig();
+  if (cfg.auth === 'dev') return {};
+  const data = await cognito('ResendConfirmationCode', { ClientId: cfg.userPoolClientId, Username: username });
+  const details = data.CodeDeliveryDetails as { Destination?: string } | undefined;
+  return details?.Destination ? { destination: details.Destination } : {};
 }
 
 async function idToken(): Promise<string> {

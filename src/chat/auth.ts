@@ -1,9 +1,11 @@
 /**
  * Sign-in for the web client. The browser signs in with Amazon Cognito and sends the ID token as
- * "Authorization: Bearer <token>". The farm comes only from the verified token's custom:farmId claim
- * (set by an admin, not editable by the user), never from anything else the browser sends.
+ * "Authorization: Bearer <token>". The farm comes only from the verified token: the admin-set
+ * custom:farmId claim, or a private farm for a user who signed up (see src/auth/cognito-farm.ts),
+ * never from anything else the browser sends.
  */
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import { farmIdFromClaims } from '../auth/cognito-farm.js';
 
 export interface ChatUser {
   /** Stable user id (Cognito "sub"). Conversations are stored per user. */
@@ -32,8 +34,8 @@ export class CognitoAuthenticator implements ChatAuthenticator {
     if (!token) return undefined;
     try {
       const claims = await this.verifier.verify(token);
-      const farmId = claims['custom:farmId'];
-      if (typeof farmId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(farmId)) return undefined;
+      const farmId = farmIdFromClaims(claims as Record<string, unknown>);
+      if (!farmId) return undefined;
       const name = typeof claims.name === 'string' ? claims.name : String(claims['cognito:username'] ?? 'Farmer');
       return { userId: claims.sub, farmId, name };
     } catch {

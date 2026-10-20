@@ -35,8 +35,11 @@ export interface PublicConfig {
 export interface ChatAppDeps {
   auth: ChatAuthenticator;
   conversations: ConversationStore;
-  /** MCP connection for a farm, or undefined when that farm has no MCP access configured. */
-  toolsFor(farmId: string): FarmToolClient | undefined;
+  /**
+   * MCP connection for a farm, or undefined when that farm has no MCP access configured. `userToken` is the
+   * signed-in user's own ID token, for farms reached with the user's identity rather than a service token.
+   */
+  toolsFor(farmId: string, userToken?: string): FarmToolClient | undefined;
   model?: AgentModel | undefined;
   assets: Record<string, StaticAsset>;
   publicConfig: PublicConfig;
@@ -127,7 +130,7 @@ export async function handleChatRequest(request: Request, deps: ChatAppDeps): Pr
 
   const user = await deps.auth.authenticate(request.headers.get('authorization'));
   if (!user) return problem(401, 'Please sign in again.');
-  const tools = deps.toolsFor(user.farmId);
+  const tools = deps.toolsFor(user.farmId, /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization') ?? '')?.[1]);
   if (!tools) return problem(403, 'This account is not linked to a farm that FarmAssist can open yet.');
 
   const body = await readJsonBody(request, path === '/api/photo' ? MAX_PHOTO_BODY_BYTES : MAX_BODY_BYTES);
