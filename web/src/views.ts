@@ -594,13 +594,14 @@ const dueTone = (i: ReminderItem) => (i.overdue ? 'danger' : i.daysLeft <= 3 ? '
 const fetchReminders = (days: number) => readTool<{ items: ReminderItem[] }>('list_reminders', { daysAhead: days });
 
 /** Reminders and insurance renewals due in the next `days` days (and anything overdue), soonest first. */
-export async function upcomingList(days: number, loaded?: Promise<{ data: { items: ReminderItem[] } }>): Promise<Node> {
+export async function upcomingList(days: number, loaded?: Promise<{ data: { items: ReminderItem[] } }>, limit = Infinity): Promise<Node> {
   const { data } = await (loaded ?? fetchReminders(days));
   if (data.items.length === 0) return emptyState('bell', `Nothing due in the next ${plural(days, 'day', 'days')}.`, 'Ask in chat: "Remind me to deworm the calves on Friday".');
-  return h(
+  const more = data.items.length - limit;
+  const list = h(
     'ul',
     { class: 'rows' },
-    ...data.items.map((i) =>
+    ...data.items.slice(0, limit).map((i) =>
       h(
         'li',
         { class: i.overdue ? 'row overdue' : 'row' },
@@ -610,6 +611,7 @@ export async function upcomingList(days: number, loaded?: Promise<{ data: { item
       ),
     ),
   );
+  return more > 0 ? h('div', {}, list, h('a', { class: 'link more-link', href: '#/farm' }, `${plural(more, 'more item', 'more items')} on the Farm screen`, icon('chevron'))) : list;
 }
 
 export const emptyState = (name: IconName, text: string, hint?: string) =>
@@ -730,7 +732,7 @@ export function todayView(): HTMLElement {
       statTile('#/farm', 'cow', 'Animals', async () => {
         const { data } = await readTool<AnimalsResult>('list_animals');
         return { value: String(data.total), sub: data.total ? animalCounts(data.byType) : 'None registered' };
-      }, 'amber'),
+      }, 'amber', 'cowSide'),
       statTile('#/farm', 'sprout', 'Growing crops', async () => {
         const { data } = await readTool<{ crops: Array<{ status: string; crop: string }> }>('list_crops');
         const growing = data.crops.filter((c) => c.status === 'growing');
@@ -764,10 +766,11 @@ export function todayView(): HTMLElement {
         {},
         h('p', { class: 'big' }, data.totalDisplay),
         h('p', { class: 'muted small' }, `${plural(data.entryCount, 'expense', 'expenses')} since ${shortDate(data.range.from)}`),
-        data.groups.length ? categoryRows(data.groups.map((g) => ({ key: g.key, value: g.totalDisplay, count: g.entryCount }))) : emptyState('wallet', 'Nothing recorded this month yet.'),
+        // The two largest categories keep the card level with its neighbour; the rest are on the Expenses screen.
+        data.groups.length ? categoryRows(data.groups.slice(0, 2).map((g) => ({ key: g.key, value: g.totalDisplay, count: g.entryCount }))) : emptyState('wallet', 'Nothing recorded this month yet.'),
       );
     });
-    void fillCard(upcoming, () => upcomingList(7, reminders));
+    void fillCard(upcoming, () => upcomingList(7, reminders, 3));
     void fillCard(week, async () => {
       const { data } = await readTool<WeeklyInsights>('weekly_insights');
       return h('div', {}, h('p', { class: 'lines' }, data.narrative), h('p', { class: 'verified-strip' }, icon('bulb'), 'Every number here is checked against your saved records.'));
@@ -781,21 +784,14 @@ export function todayView(): HTMLElement {
     { class: 'view' },
     pageHeader(h('span', { class: 'greeting' }, greeting(), h('span', { class: 'greeting-leaf' }, icon('leaf'))), "Here's your farm at a glance.", h('span', { class: 'date-chip' }, icon('calendar'), longToday()), refresh),
     tiles,
+    // A 2 × 2 grid (not two columns), so each pair of cards shares one row height and their edges line up.
     h(
       'div',
-      { class: 'dash-grid' },
-      h(
-        'div',
-        { class: 'dash-col' },
-        card('Today on the farm', today, { icon: 'doc', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('') }, 'Record in chat', icon('chevron')) }),
-        card('Last 7 days', week, { icon: 'chart' }),
-      ),
-      h(
-        'div',
-        { class: 'dash-col' },
-        card('Coming up', upcoming, { icon: 'calendar', action: h('a', { class: 'link', href: '#/farm' }, 'Next 30 days', icon('chevron')) }),
-        card('This month', month, { icon: 'chart', action: h('a', { class: 'link', href: '#/expenses' }, 'All expenses', icon('chevron')) }),
-      ),
+      { class: 'dash-grid home-grid' },
+      card('Today on the farm', today, { icon: 'doc', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('') }, 'Record in chat', icon('chevron')) }),
+      card('Coming up', upcoming, { icon: 'calendar', action: h('a', { class: 'link', href: '#/farm' }, 'Next 30 days', icon('chevron')) }),
+      card('Last 7 days', week, { icon: 'chart', action: h('a', { class: 'link', href: '#/expenses', 'aria-label': 'All expenses' }, icon('chevron')) }),
+      card('This month', month, { icon: 'chart', action: h('a', { class: 'link', href: '#/expenses' }, 'All expenses', icon('chevron')) }),
     ),
   );
 }
