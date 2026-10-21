@@ -265,9 +265,11 @@ window.addEventListener('hashchange', () => render());
 // A record was saved in chat: reload the page beside the assistant (the conversation itself is kept).
 window.addEventListener('farmassist:changed', () => {
   if (!isSignedIn() || !root.querySelector('.content > .view')) return;
-  const y = window.scrollY;
+  // The page scrolls inside .content (the window itself never scrolls): keep the farmer's place.
+  const y = root.querySelector('.content')?.scrollTop ?? 0;
   render();
-  window.scrollTo(0, y);
+  const content = root.querySelector('.content');
+  if (content) content.scrollTop = y;
 });
 window.addEventListener('online', () => render());
 window.addEventListener('offline', () => render());

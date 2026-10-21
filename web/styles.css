@@ -485,3 +485,177 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 /* Voice log (?voicedebug=1) */
 .voice-debug { margin-top: 8px; display: grid; gap: 6px; }
 .voice-log { margin: 0; max-height: 150px; overflow: auto; padding: 8px; border-radius: 8px; background: var(--ink-2); color: var(--on-ink-muted); font: 0.72rem/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+
+/* =====================================================================================================
+   Premium pass (2026-10-21): fixed-height app (only content scrolls), refined scrollbars, softer depth.
+   ===================================================================================================== */
+:root {
+  --bg: #f4f1e9;
+  --bg-2: #efe9dc;
+  --hairline: rgba(42, 52, 40, 0.09);
+  --shadow: 0 1px 1px rgba(25, 35, 25, 0.03), 0 2px 6px rgba(25, 35, 25, 0.04), 0 12px 28px -12px rgba(25, 35, 25, 0.12);
+  --shadow-hover: 0 1px 2px rgba(25, 35, 25, 0.04), 0 6px 14px rgba(25, 35, 25, 0.06), 0 22px 40px -16px rgba(25, 35, 25, 0.2);
+  --radius: 18px;
+  --scroll-thumb: rgba(48, 60, 46, 0.22);
+  --scroll-thumb-hover: rgba(48, 60, 46, 0.42);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101311;
+    --bg-2: #0c0f0d;
+    --hairline: rgba(255, 255, 255, 0.07);
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px -14px rgba(0, 0, 0, 0.6);
+    --shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 18px 40px -16px rgba(0, 0, 0, 0.75);
+    --scroll-thumb: rgba(255, 255, 255, 0.16);
+    --scroll-thumb-hover: rgba(255, 255, 255, 0.32);
+  }
+}
+
+/* ---- The window never scrolls; the app fills the screen and its panels scroll inside it ---- */
+html, body { height: 100%; }
+body {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(214, 196, 150, 0.22), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(120, 160, 110, 0.12), transparent 60%),
+    linear-gradient(180deg, var(--bg), var(--bg-2));
+  background-attachment: fixed;
+  font-feature-settings: 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.app { height: 100vh; height: 100dvh; overflow: hidden; }
+
+.app-wide { min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.side { position: relative; height: 100%; }
+.main-col { height: 100%; min-height: 0; overflow: hidden; }
+.app-wide .topbar { position: relative; flex: none; }
+.app-wide .content {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  max-width: none; margin: 0;
+  /* Centre the page in a 1180px column while the scrollbar sits at the window edge. */
+  padding: 28px max(28px, calc((100% - 1180px) / 2)) 40px;
+}
+
+.app-narrow { display: flex; flex-direction: column; }
+.app-narrow .topbar { position: relative; flex: none; }
+.app-narrow .dev-banner { flex: none; }
+.app-narrow .content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 24px; }
+.app-narrow .tabs { position: relative; flex: none; }
+.app-narrow.on-chat .content { padding-bottom: 0; overflow: hidden; }
+
+/* ---- Scrollbars: thin, rounded, quiet until hovered ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb); border-radius: 999px;
+  border: 3px solid transparent; background-clip: padding-box; min-height: 40px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+.assistant ::-webkit-scrollbar-thumb, .side ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); background-clip: padding-box; }
+.assistant ::-webkit-scrollbar-thumb:hover, .side ::-webkit-scrollbar-thumb:hover { background: rgba(143, 211, 160, 0.45); background-clip: padding-box; }
+/* Chromium uses the styles above only when no standard scrollbar-color is set; Firefox gets the standard ones. */
+.chat-log, .topnav { scrollbar-color: auto; }
+@supports (-moz-appearance: none) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+  .assistant *, .side * { scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+}
+
+/* ---- Top bar: glass with a hairline ---- */
+.topbar {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--hairline);
+}
+.app-wide .topbar { background: color-mix(in srgb, var(--bg) 70%, transparent); padding: 14px 28px; }
+.topnav { gap: 4px; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 70%, transparent); border: 1px solid var(--hairline); }
+.topnav a { min-height: 38px; padding: 0 16px; font-weight: 600; transition: background-color 0.2s, color 0.2s, box-shadow 0.2s; }
+.topnav a.active { background: var(--surface); color: var(--green-dark); box-shadow: 0 1px 2px rgba(25, 35, 25, 0.08), 0 4px 12px -6px rgba(25, 35, 25, 0.2); }
+.avatar { background: linear-gradient(145deg, #e9f2e6, #d7e8d3); box-shadow: inset 0 0 0 1px rgba(31, 107, 58, 0.15); }
+
+/* ---- Type ---- */
+h2 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+h3 { font-weight: 650; letter-spacing: -0.005em; }
+.big { font-weight: 750; letter-spacing: -0.025em; }
+
+/* ---- Cards ---- */
+.card, .stat, .entries {
+  background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 94%, var(--bg)));
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow);
+}
+.card { padding: 20px 22px; border-radius: var(--radius); }
+.card-head { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--hairline); }
+.card-icon, .stat-icon, .row-icon, .empty-icon {
+  background: linear-gradient(145deg, #eef5ec, #dcebd8);
+  color: var(--green-dark);
+  box-shadow: inset 0 0 0 1px rgba(31, 107, 58, 0.12), 0 2px 6px -2px rgba(31, 107, 58, 0.25);
+  border: 0;
+}
+.row.overdue .row-icon, .stat-danger .stat-icon { background: linear-gradient(145deg, #fdeeea, #f8d9d2); color: var(--danger-text); }
+@media (prefers-color-scheme: dark) {
+  .card-icon, .stat-icon, .row-icon, .empty-icon { background: linear-gradient(145deg, #1f3324, #172a1c); box-shadow: inset 0 0 0 1px rgba(143, 211, 160, 0.15); }
+  .row.overdue .row-icon, .stat-danger .stat-icon { background: linear-gradient(145deg, #3b1d1a, #2d1513); }
+  .avatar { background: linear-gradient(145deg, #1f3324, #172a1c); }
+}
+
+/* Summary tiles: quiet label, confident number, a soft lift on hover */
+.stats { gap: 16px; }
+.stat {
+  position: relative; overflow: hidden; padding: 18px 18px 16px; border-radius: var(--radius);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s, border-color 0.25s;
+}
+.stat::after {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: linear-gradient(90deg, #1f6b3a, #6fbf7d 60%, rgba(184, 138, 46, 0.7));
+  opacity: 0; transition: opacity 0.25s;
+}
+.stat:hover { transform: translateY(-3px); box-shadow: var(--shadow-hover); border-color: color-mix(in srgb, var(--green) 30%, var(--hairline)); }
+.stat:hover::after { opacity: 1; }
+.stat-top { font-size: 0.74rem; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; }
+.stat-value { font-size: 1.75rem; font-weight: 750; letter-spacing: -0.03em; margin-top: 6px; }
+.stat-sub { font-size: 0.8rem; }
+.stat-danger { border-color: rgba(161, 42, 29, 0.25); }
+.stat-danger::after { background: linear-gradient(90deg, #a12a1d, #e07a5f); opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .stat, .stat:hover { transition: none; transform: none; } }
+
+/* Lists and rows */
+.breakdown li, .milk-line, .row, .entry { border-top-color: var(--hairline); }
+.breakdown li { padding: 10px 0; }
+.entry { transition: background-color 0.15s; }
+.entry:hover { background: color-mix(in srgb, var(--green-soft) 45%, transparent); }
+.badge { padding: 4px 11px; }
+.badge-neutral { background: color-mix(in srgb, var(--surface) 60%, var(--bg)); border-color: var(--hairline); }
+.filter-card select { background: var(--surface); }
+
+/* Buttons */
+.btn-outline { border-color: var(--hairline); background: var(--surface); box-shadow: 0 1px 2px rgba(25, 35, 25, 0.05); border-radius: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
+.btn-outline:hover { border-color: color-mix(in srgb, var(--green) 40%, var(--hairline)); box-shadow: 0 4px 14px -6px rgba(25, 35, 25, 0.25); }
+button.primary, .btn {
+  background: linear-gradient(180deg, #23793f, #1b6233);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset, 0 6px 16px -8px rgba(31, 107, 58, 0.7);
+  border-radius: 12px;
+}
+button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #268445, #1d6a37); }
+.assistant button.primary { background: var(--mint); box-shadow: none; }
+
+/* ---- Assistant panel: depth instead of flat black ---- */
+.side, .app-narrow .assistant {
+  background:
+    radial-gradient(500px 300px at 50% -10%, rgba(52, 196, 240, 0.08), transparent 70%),
+    linear-gradient(180deg, #1a201c, #141815);
+}
+.side { border-right: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 8px 0 30px -20px rgba(0, 0, 0, 0.5); }
+.side .assistant { background: transparent; }
+.assistant-head, .sim, .composer-wrap { border-color: rgba(255, 255, 255, 0.06); }
+.bubble-bot { background: rgba(255, 255, 255, 0.045); border-color: rgba(255, 255, 255, 0.07); box-shadow: 0 6px 18px -12px rgba(0, 0, 0, 0.6); }
+.bubble-me { background: linear-gradient(160deg, #2f8a52, #23703f); box-shadow: 0 8px 20px -12px rgba(31, 107, 58, 0.9); }
+.composer { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); border-radius: 18px; }
+.try-item, .tool-call, .sim-toggle, .sim-controls select { background: rgba(255, 255, 255, 0.035); border-color: rgba(255, 255, 255, 0.08); }
+.try-item:hover { background: rgba(255, 255, 255, 0.07); }
+.tool-call { border-radius: 12px; }
+
+/* Bottom tabs on phones: glass bar */
+.tabs { background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px); border-top: 1px solid var(--hairline); }
