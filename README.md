@@ -125,7 +125,7 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
    To give someone the shared demo farm instead, create them as an admin. `UserPoolId` is a stack output. Choose your own temporary password; it is replaced at first sign-in:
 
    ```bash
-   aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <name> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=demo-farm --temporary-password "<temporary password>" --message-action SUPPRESS
+   aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <name> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=KRISHNA-FARM --temporary-password "<temporary password>" --message-action SUPPRESS
    ```
 
 4. **Check it.** Open the `WebAppUrl` output, and run the checks below against the `McpEndpoint` output.
