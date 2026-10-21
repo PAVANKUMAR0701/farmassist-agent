@@ -2,7 +2,7 @@
  * The four screens. Every amount shown is a display string computed by the server (totalDisplay,
  * amountDisplay): the client never adds anything up.
  */
-import { ApiError, readTool, sendChat, sendPhoto, type ChatReply } from './api.js';
+import { ApiError, displayName, readTool, sendChat, sendPhoto, type ChatReply } from './api.js';
 import { shrinkPhoto } from './photo.js';
 import { append, badge, clear, h, icon, label, notice, pageHeader, shortDate, spinner, type IconName } from './dom.js';
 import { VoiceSimulator, type SimState, type SimView } from './simulator.js';
@@ -48,14 +48,27 @@ const CONVERSATION_KEY = 'farmassist.conversation';
  * Questions are sent straight away. Examples that would save a record only fill the box, so one tap never
  * writes to the farm ledger: the farmer edits the amount and presses Send.
  */
-const SUGGESTIONS: Array<{ text: string; send: boolean }> = [
-  { text: 'How much did I spend today?', send: true },
-  { text: "Today's summary", send: true },
-  { text: 'How much on feed this month?', send: true },
-  { text: 'How was my week?', send: true },
-  { text: 'Spent 500 on cattle feed', send: false },
-  { text: 'Lakshmi gave 8 litres this morning', send: false },
+const SUGGESTIONS: Array<{ text: string; send: boolean; icon: IconName; more?: boolean }> = [
+  { text: 'How much did I spend today?', send: true, icon: 'question' },
+  { text: "Today's summary", send: true, icon: 'doc' },
+  { text: 'How much on feed this month?', send: true, icon: 'sprout' },
+  { text: 'How was my week?', send: true, icon: 'chart' },
+  { text: 'Show milk records', send: true, icon: 'milk' },
+  // Behind "View more"
+  { text: 'Show my crops', send: true, icon: 'leaf', more: true },
+  { text: 'What is due this week?', send: true, icon: 'bell', more: true },
+  { text: 'Spent 500 on cattle feed', send: false, icon: 'plus', more: true },
+  { text: 'Lakshmi gave 8 litres this morning', send: false, icon: 'plus', more: true },
 ];
+
+/** The ALEXA+ wordmark (text with a curved underline), shown as supporting integration branding. */
+function alexaMark(): HTMLElement {
+  const mark = h('span', { class: 'alexa-mark', role: 'img', 'aria-label': 'Alexa+' });
+  mark.innerHTML =
+    '<svg viewBox="0 0 120 34" aria-hidden="true"><text x="60" y="20" text-anchor="middle" font-size="19" font-weight="800" letter-spacing="2" fill="currentColor">ALEXA+</text>' +
+    '<path d="M28 25 Q60 34 92 25" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+  return mark;
+}
 
 /** Set by chatView: puts text in the assistant's box and focuses it (used by "Record in chat" buttons). */
 let fillComposer: ((text: string) => void) | undefined;
@@ -281,7 +294,17 @@ export function chatView(): HTMLElement {
   const hint = h('p', { class: 'sim-hint' });
   /** The round mic beside Send: talk now, no wake word needed. Red with a stop square while listening. */
   const talk = h('button', { type: 'button', class: 'talk', 'data-state': 'off' }, icon('mic'));
-  const simBox = h('div', { class: 'sim' }, orb, h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style simulator'), status, hint));
+  const waves = (side: string) => h('span', { class: `orb-waves orb-waves-${side}`, 'aria-hidden': 'true' }, icon('waves'));
+  const newChatButton = h('button', { class: 'ask-new', type: 'button', title: 'Start a new chat' }, icon('plus'), 'New chat');
+  const simBox = h(
+    'div',
+    { class: 'sim ask-card' },
+    h('div', { class: 'ask-head' }, h('p', { class: 'ask-title' }, 'Ask FarmAssist'), newChatButton),
+    h('p', { class: 'ask-desc' }, 'Get insights about your farm, expenses, animals, crops and more.'),
+    h('div', { class: 'orb-wrap' }, waves('left'), orb, waves('right')),
+    h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style simulator'), status, hint),
+    alexaMark(),
+  );
   /** Hands-free: after each reply the mic stays on and waits for "Alexa". Off by default: the mic is never on unasked. */
   let handsFree = false;
   const render = (state: SimState, view: SimView) => {
@@ -392,21 +415,31 @@ export function chatView(): HTMLElement {
 
   /** "Try saying" examples, shown until the conversation starts. Questions are sent; record examples only fill the box. */
   const greet = () => {
-    log.appendChild(
-      h(
-        'div',
-        { class: 'try', role: 'group', 'aria-label': 'Try saying' },
-        h('p', { class: 'try-title' }, 'Try saying'),
-        ...SUGGESTIONS.map((s) =>
-          h(
-            'button',
-            { class: `try-item${s.send ? '' : ' fill'}`, type: 'button', title: s.send ? 'Ask this' : 'Put this in the box to edit, then press Send', onclick: () => (s.send ? void submit(s.text) : fillComposer?.(s.text)) },
-            `“${s.text}”`,
-          ),
+    const item = (text: string, iconName: IconName, onclick: () => void, extra = '', title = 'Ask this') =>
+      h('button', { class: `try-item${extra}`, type: 'button', title, onclick }, h('span', { class: 'try-icon' }, icon(iconName)), h('span', { class: 'try-text' }, text), h('span', { class: 'try-chevron' }, icon('chevron')));
+    const list = h('div', { class: 'try', role: 'group', 'aria-label': 'Try saying' });
+    const more = h('button', { class: 'try-more', type: 'button', 'aria-expanded': 'false' }, 'View more', icon('chevronDown'));
+    more.addEventListener('click', () => {
+      const open = !list.classList.contains('show-more');
+      list.classList.toggle('show-more', open);
+      more.setAttribute('aria-expanded', String(open));
+      more.replaceChildren(open ? 'View less' : 'View more', icon('chevronDown'));
+    });
+    list.append(
+      h('p', { class: 'try-title' }, icon('waves'), 'Try saying'),
+      ...SUGGESTIONS.map((s) =>
+        item(
+          `“${s.text}”`,
+          s.icon,
+          () => (s.send ? void submit(s.text) : fillComposer?.(s.text)),
+          `${s.send ? '' : ' fill'}${s.more ? ' more' : ''}`,
+          s.send ? 'Ask this' : 'Put this in the box to edit, then press Send',
         ),
-        h('button', { class: 'try-item fill', type: 'button', onclick: () => camera.click() }, icon('camera'), 'Check a crop or animal photo'),
       ),
+      item('Check a crop or animal photo', 'camera', () => camera.click(), ' fill more', 'Send a photo'),
+      more,
     );
+    log.appendChild(list);
   };
 
   fillComposer = (text: string) => {
@@ -448,24 +481,46 @@ export function chatView(): HTMLElement {
     }
   });
 
-  const form = h('form', { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), sim.cancelCommand(), void submit(input.value)) }, camera, photoInput, input, send, voiceInput ? talk : null);
+  newChatButton.addEventListener('click', newChat);
+  // The round button on the right is always the microphone. Typed text is sent with Enter, or with the small
+  // arrow that appears inside the box only while there is text.
+  const showSend = (): void => void form.classList.toggle('has-text', input.value.trim().length > 0);
+  input.addEventListener('input', showSend);
+  const keyboard = h('span', { class: 'composer-icon', 'aria-hidden': 'true' }, icon('keyboard'));
+  const form: HTMLFormElement = h(
+    'form',
+    { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), sim.cancelCommand(), void submit(input.value), showSend()) },
+    keyboard,
+    photoInput,
+    input,
+    send,
+    voiceInput ? talk : null,
+  );
+  // Settings: hands-free, photo help and a new chat, out of the way of the main controls.
+  const settings = h(
+    'details',
+    { class: 'settings-menu' },
+    h('summary', { 'aria-label': 'Voice and chat settings', title: 'Settings' }, icon('settings')),
+    h(
+      'div',
+      { class: 'menu', role: 'menu' },
+      voiceInput ? handsFreeButton : null,
+      h('button', { type: 'button', class: 'sim-toggle', onclick: () => camera.click() }, icon('camera'), 'Send a crop or animal photo'),
+      h('button', { type: 'button', class: 'sim-toggle', onclick: () => newChat() }, icon('plus'), 'New chat'),
+    ),
+  );
+  const languageBox = h('label', { class: 'lang-box' }, icon('globe'), language);
   greet();
   return h(
     'section',
     { class: 'assistant', 'aria-label': 'FarmAssist assistant' },
-    h(
-      'div',
-      { class: 'assistant-head' },
-      h('div', { class: 'assistant-title' }, h('span', { class: 'assistant-mark' }, icon('logo')), h('div', {}, h('strong', {}, 'Ask FarmAssist'), h('span', {}, 'Every number checked against your records'))),
-      h('button', { class: 'ghost', type: 'button', onclick: newChat }, 'New chat'),
-    ),
     simBox,
     log,
     h(
       'div',
       { class: 'composer-wrap' },
       form,
-      h('div', { class: 'sim-controls' }, voiceOutput ? speaker : null, voiceInput || voiceOutput ? language : null, voiceInput ? handsFreeButton : null),
+      h('div', { class: 'sim-controls' }, voiceOutput ? speaker : null, voiceInput || voiceOutput ? languageBox : null, settings),
       h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.'),
       voiceDebug ? voiceDebugPanel() : null,
     ),
@@ -518,7 +573,7 @@ export async function upcomingList(days: number, loaded?: Promise<{ data: { item
       h(
         'li',
         { class: i.overdue ? 'row overdue' : 'row' },
-        h('span', { class: 'row-icon' }, icon(i.source === 'insurance' ? 'cow' : 'bell')),
+        h('span', { class: `row-icon${i.overdue ? '' : ' ok'}` }, icon(i.source === 'insurance' ? 'shield' : 'bell')),
         h('span', { class: 'row-main' }, h('strong', {}, i.title), h('span', { class: 'muted small' }, `${i.source === 'insurance' ? 'Insurance renewal' : 'Reminder'} · ${shortDate(i.dueDate)}`)),
         badge(dueLabel(i), dueTone(i)),
       ),
@@ -554,11 +609,38 @@ export async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
 export const breakdown = (rows: Array<{ name: string; value: string; count: number }>) =>
   h('ul', { class: 'breakdown' }, ...rows.map((r) => h('li', {}, h('span', {}, `${label(r.name)} `, h('span', { class: 'muted small' }, `(${r.count})`)), h('strong', {}, r.value))));
 
+const CATEGORY_ICONS: Record<string, IconName> = { feed: 'leaf', fodder: 'sprout', medicine: 'pill', labour: 'user', fuel: 'fuel', equipment: 'wrench', seed: 'sprout', other: 'dots' };
+/** Expense categories (or milk, activities) as rows with an icon, a label and a right-aligned value. */
+const iconRows = (rows: Array<{ icon: IconName; name: string; count?: number; value: string }>) =>
+  h(
+    'ul',
+    { class: 'breakdown icon-rows' },
+    ...rows.map((r) =>
+      h('li', {}, h('span', { class: 'row-lead' }, h('span', { class: 'mini-icon' }, icon(r.icon)), r.name, r.count !== undefined ? h('span', { class: 'muted small' }, ` (${r.count})`) : null), h('strong', {}, r.value)),
+    ),
+  );
+const categoryRows = (groups: Array<{ key: string; value: string; count: number }>) =>
+  iconRows(groups.map((g) => ({ icon: CATEGORY_ICONS[g.key] ?? 'dots', name: label(g.key), count: g.count, value: g.value })));
+
 /** A summary tile on the home screen. It links only to a screen that shows the same records in full. */
-function statTile(href: string, name: IconName, title: string, load: () => Promise<{ value: string; sub: string; tone?: 'warn' | 'danger' }>): HTMLElement {
+function statTile(
+  href: string,
+  name: IconName,
+  title: string,
+  load: () => Promise<{ value: string; sub: string; tone?: 'warn' | 'danger' }>,
+  accent = 'green',
+  art: IconName = name,
+): HTMLElement {
   const value = h('span', { class: 'stat-value skeleton' }, '…');
   const sub = h('span', { class: 'stat-sub' }, 'Loading…');
-  const tile = h('a', { class: 'stat', href }, h('span', { class: 'stat-top' }, h('span', { class: 'stat-icon' }, icon(name)), h('span', { class: 'stat-label' }, title)), value, sub);
+  const tile = h(
+    'a',
+    { class: `stat stat-accent-${accent}`, href },
+    h('span', { class: 'stat-top' }, h('span', { class: 'stat-icon' }, icon(name)), h('span', { class: 'stat-label' }, title), h('span', { class: 'stat-chevron' }, icon('chevron'))),
+    value,
+    sub,
+    h('span', { class: 'stat-art', 'aria-hidden': 'true' }, icon(art)),
+  );
   load()
     .then((r) => {
       value.classList.remove('skeleton');
@@ -586,8 +668,11 @@ export const animalCounts = (byType: Array<{ type: string; count: number }>) =>
 
 const greeting = () => {
   const hour = new Date().getHours();
-  return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const first = displayName().split(/[\s@._]/)[0];
+  return first ? `${hello}, ${first.charAt(0).toUpperCase()}${first.slice(1)}` : hello;
 };
+const longToday = () => new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 
 export function todayView(): HTMLElement {
   const tiles = h('div', { class: 'stats' });
@@ -606,25 +691,25 @@ export function todayView(): HTMLElement {
       statTile('#/expenses', 'wallet', 'Spent today', async () => {
         const { data } = await daily;
         return { value: data.expenseTotalDisplay, sub: plural(data.expenseCount, 'expense', 'expenses') };
-      }),
+      }, 'green', 'chart'),
       statTile('#/farm', 'milk', 'Milk today', async () => {
         const { data } = await daily;
         return data.milkTotalMillilitres > 0 ? { value: data.milkTotalDisplay, sub: 'Recorded today' } : { value: '—', sub: 'Not recorded yet' };
-      }),
+      }, 'blue', 'waves'),
       statTile('#/farm', 'cow', 'Animals', async () => {
         const { data } = await readTool<AnimalsResult>('list_animals');
         return { value: String(data.total), sub: data.total ? animalCounts(data.byType) : 'None registered' };
-      }),
+      }, 'amber'),
       statTile('#/farm', 'sprout', 'Growing crops', async () => {
         const { data } = await readTool<{ crops: Array<{ status: string; crop: string }> }>('list_crops');
         const growing = data.crops.filter((c) => c.status === 'growing');
         return { value: String(growing.length), sub: growing.length ? [...new Set(growing.map((c) => label(c.crop)))].join(', ') : 'None growing' };
-      }),
+      }, 'mint', 'leaf'),
       statTile('#/farm', 'bell', 'Due soon', async () => {
         const { data } = await reminders;
         const overdue = data.items.filter((i) => i.overdue).length;
         return { value: String(data.items.length), sub: overdue ? `${overdue} overdue` : data.items.length ? 'Nothing overdue' : 'All clear', ...(overdue ? { tone: 'danger' as const } : {}) };
-      }),
+      }, 'rose', 'calendar'),
     );
 
     void fillCard(today, async () => {
@@ -633,11 +718,11 @@ export function todayView(): HTMLElement {
         'div',
         {},
         h('p', { class: 'muted small' }, `${shortDate(data.date)} · ${plural(data.expenseCount, 'expense', 'expenses')} · ${plural(data.activities.length, 'activity', 'activities')}`),
-        data.byCategory.length ? breakdown(data.byCategory.map((g) => ({ name: g.category, value: g.totalDisplay, count: g.entryCount }))) : null,
-        data.milkTotalMillilitres > 0 ? h('p', { class: 'milk-line' }, h('span', {}, 'Milk today'), h('strong', {}, data.milkTotalDisplay)) : null,
-        data.activities.length
-          ? h('ul', { class: 'plain' }, ...data.activities.map((a) => h('li', {}, `${label(a.activityType)}${a.animalOrField ? ` · ${a.animalOrField}` : ''}`)))
-          : null,
+        iconRows([
+          ...data.byCategory.map((g) => ({ icon: CATEGORY_ICONS[g.category] ?? ('dots' as IconName), name: label(g.category), count: g.entryCount, value: g.totalDisplay })),
+          ...(data.milkTotalMillilitres > 0 ? [{ icon: 'milk' as IconName, name: 'Milk today', value: data.milkTotalDisplay }] : []),
+          ...data.activities.map((a) => ({ icon: 'dots' as IconName, name: `${label(a.activityType)}${a.animalOrField ? ` · ${a.animalOrField}` : ''}`, value: '' })),
+        ]),
         !data.expenseCount && !data.activities.length && data.milkTotalMillilitres === 0 ? emptyState('list', 'Nothing recorded today yet.', 'Tell FarmAssist what you spent or did, by voice or text.') : null,
       );
     });
@@ -648,13 +733,13 @@ export function todayView(): HTMLElement {
         {},
         h('p', { class: 'big' }, data.totalDisplay),
         h('p', { class: 'muted small' }, `${plural(data.entryCount, 'expense', 'expenses')} since ${shortDate(data.range.from)}`),
-        data.groups.length ? breakdown(data.groups.map((g) => ({ name: g.key, value: g.totalDisplay, count: g.entryCount }))) : emptyState('wallet', 'Nothing recorded this month yet.'),
+        data.groups.length ? categoryRows(data.groups.map((g) => ({ key: g.key, value: g.totalDisplay, count: g.entryCount }))) : emptyState('wallet', 'Nothing recorded this month yet.'),
       );
     });
     void fillCard(upcoming, () => upcomingList(7, reminders));
     void fillCard(week, async () => {
       const { data } = await readTool<WeeklyInsights>('weekly_insights');
-      return h('div', {}, h('p', { class: 'lines' }, data.narrative), h('p', { class: 'muted small verified' }, '✓ Every number here is checked against your saved records.'));
+      return h('div', {}, h('p', { class: 'lines' }, data.narrative), h('p', { class: 'verified-strip' }, icon('bulb'), 'Every number here is checked against your saved records.'));
     });
   };
   load();
@@ -663,7 +748,7 @@ export function todayView(): HTMLElement {
   return h(
     'section',
     { class: 'view' },
-    pageHeader(greeting(), 'Here is your farm at a glance.', refresh),
+    pageHeader(greeting(), "Here's your farm at a glance.", h('span', { class: 'date-chip' }, icon('calendar'), longToday()), refresh),
     tiles,
     h(
       'div',
@@ -671,14 +756,14 @@ export function todayView(): HTMLElement {
       h(
         'div',
         { class: 'dash-col' },
-        card('Today on the farm', today, { icon: 'list', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('') }, 'Record in chat') }),
-        card('Last 7 days', week, { icon: 'sprout' }),
+        card('Today on the farm', today, { icon: 'doc', action: h('button', { class: 'link', type: 'button', onclick: () => askAssistant('') }, 'Record in chat', icon('chevron')) }),
+        card('Last 7 days', week, { icon: 'chart' }),
       ),
       h(
         'div',
         { class: 'dash-col' },
-        card('Coming up', upcoming, { icon: 'bell', action: h('a', { class: 'link', href: '#/farm' }, 'Next 30 days') }),
-        card('This month', month, { icon: 'wallet', action: h('a', { class: 'link', href: '#/expenses' }, 'All expenses') }),
+        card('Coming up', upcoming, { icon: 'calendar', action: h('a', { class: 'link', href: '#/farm' }, 'Next 30 days', icon('chevron')) }),
+        card('This month', month, { icon: 'chart', action: h('a', { class: 'link', href: '#/expenses' }, 'All expenses', icon('chevron')) }),
       ),
     ),
   );

@@ -10,8 +10,8 @@ import { activitiesView, chatView, DESKTOP_QUERY, expensesView, pauseVoice, toda
 const ROUTES: Record<string, { title: string; icon: IconName; view: () => HTMLElement }> = {
   chat: { title: 'Ask', icon: 'chat', view: todayView },
   today: { title: 'Home', icon: 'home', view: todayView },
-  expenses: { title: 'Expenses', icon: 'wallet', view: expensesView },
-  farm: { title: 'Farm', icon: 'farm', view: farmView },
+  expenses: { title: 'Expenses', icon: 'doc', view: expensesView },
+  farm: { title: 'Farm', icon: 'sprout', view: farmView },
   activities: { title: 'Activities', icon: 'list', view: activitiesView },
 };
 
@@ -204,6 +204,42 @@ function navLinks(route: string, names: string[]): HTMLElement[] {
   });
 }
 
+/** Desktop: the assistant drawer can be hidden to give the dashboard the full width (remembered on this device). */
+const DRAWER_KEY = 'farmassist.drawer';
+let drawerClosed = (() => {
+  try {
+    return localStorage.getItem(DRAWER_KEY) === 'closed';
+  } catch {
+    return false;
+  }
+})();
+function setDrawerClosed(closed: boolean): void {
+  drawerClosed = closed;
+  try {
+    localStorage.setItem(DRAWER_KEY, closed ? 'closed' : 'open');
+  } catch {
+    /* only a convenience */
+  }
+  render();
+}
+
+/** Avatar, name and a menu with Sign out. */
+function accountMenu(user: string): HTMLElement {
+  const first = user.split(/[\s@._]/)[0] || user;
+  return h(
+    'details',
+    { class: 'account-menu' },
+    h(
+      'summary',
+      { 'aria-label': `Account: ${user}` },
+      h('span', { class: 'avatar', 'aria-hidden': 'true' }, (first.charAt(0) || '?').toUpperCase()),
+      h('span', { class: 'account-name' }, first),
+      icon('chevronDown'),
+    ),
+    h('div', { class: 'menu', role: 'menu' }, h('p', { class: 'menu-user' }, user), h('button', { type: 'button', role: 'menuitem', onclick: () => signOut() }, icon('logout'), 'Sign out')),
+  );
+}
+
 function shell(): HTMLElement {
   assistant ??= chatView();
   const wide = desktop.matches;
@@ -223,16 +259,34 @@ function shell(): HTMLElement {
     : null;
 
   if (wide) {
+    // A floating glass drawer on a field-and-hills scene, beside the dashboard.
+    const drawer = h(
+      'aside',
+      { class: 'scenic', 'aria-label': 'FarmAssist assistant' },
+      h(
+        'div',
+        { class: 'drawer' },
+        h(
+          'div',
+          { class: 'drawer-head' },
+          h('span', { class: 'drawer-logo' }, icon('leaf')),
+          h('div', { class: 'drawer-brand' }, h('strong', {}, 'FarmAssist ', h('span', {}, 'Agent')), h('span', {}, 'Your AI farm companion')),
+          h('button', { class: 'drawer-toggle', type: 'button', 'aria-label': 'Hide the assistant', title: 'Hide the assistant', onclick: () => setDrawerClosed(true) }, icon('chevronLeft')),
+        ),
+        assistant,
+      ),
+    );
     return h(
       'div',
-      { class: 'app app-wide' },
-      h('aside', { class: 'side' }, h('div', { class: 'side-brand' }, brand()), assistant),
+      { class: `app app-wide${drawerClosed ? ' drawer-closed' : ''}` },
+      drawerClosed ? null : drawer,
       h(
         'div',
         { class: 'main-col' },
-        h('header', { class: 'topbar' }, h('nav', { class: 'topnav', 'aria-label': 'Sections' }, ...navLinks(route, ['today', 'expenses', 'farm', 'activities'])), account),
+        h('header', { class: 'topbar' }, h('nav', { class: 'topnav', 'aria-label': 'Sections' }, ...navLinks(route, ['today', 'expenses', 'farm', 'activities'])), accountMenu(user)),
         devBanner,
         h('main', { class: 'content' }, offline, ROUTES[route]!.view()),
+        drawerClosed ? h('button', { class: 'drawer-open', type: 'button', onclick: () => setDrawerClosed(false) }, icon('mic'), 'Ask FarmAssist') : null,
       ),
     );
   }
