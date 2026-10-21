@@ -87,6 +87,13 @@ const isFillerOnly = (command: string) => {
   const words = command.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
   return words.length > 0 && words.every((w) => FILLERS.has(w));
 };
+/**
+ * The farmer is ending the conversation ("thank you", "that's all", "bye"): after the reply the mic turns off
+ * instead of opening the follow-up window. Seen in a real Edge log (2026-10-21): after "Thank you for your
+ * details" the mic came back on with its tone.
+ */
+const CLOSING = /^(ok(ay)?[,.!\s]*)?(thanks?( you)?( so much| very much)?( for (your|the) (help|details|answer|information|info))?|thank u|that'?s (all|it)|nothing (else|more)|no,? thanks?( you)?|bye( bye)?|good ?bye|done|dhanyava+d|dhanyabad|shukriya|nandri|nanri|bas)[.!\s]*$/i;
+export const isClosing = (command: string) => CLOSING.test(command.trim());
 /** A request this short gets one extra pause before it is sent (the farmer may still be thinking). */
 const SHORT_COMMAND_WORDS = 2;
 
@@ -254,8 +261,9 @@ export class VoiceSimulator {
    * After an answer: with hands-free on, wait for "Alexa"; with it off, listen briefly for a follow-up (a voice
    * assistant does not make you tap again for "and each cow?"), then turn the mic off.
    */
-  private afterReply(): void {
+  private afterReply(lastCommand: string): void {
     if (this.deps.handsFree?.() ?? true) this.toReady();
+    else if (isClosing(lastCommand)) this.stop(); // conversation over: no follow-up window, no tone
     else this.listenForCommand(false, true);
   }
 
@@ -500,7 +508,7 @@ export class VoiceSimulator {
       if (!this.active) return;
       // A read-back question ("Shall I record ₹500…?") is answered without saying "Alexa" again.
       if (reply.awaitingConfirmation) this.listenForCommand(true);
-      else this.afterReply();
+      else this.afterReply(command);
     } finally {
       this.busy = false;
     }

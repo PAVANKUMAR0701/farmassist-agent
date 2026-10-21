@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { VoiceSimulator, type SimDeps, type SimReply, type SimState } from '../../web/src/simulator.js';
+import { isClosing, VoiceSimulator, type SimDeps, type SimReply, type SimState } from '../../web/src/simulator.js';
 import { extractCommand, joinSegments, type Recognition, type RecognitionResultEvent } from '../../web/src/voice.js';
 
 /** A stand-in for the browser recogniser: the test says what it "hears". */
@@ -524,4 +524,39 @@ describe('VoiceSimulator', () => {
       expect(deps.submit).toHaveBeenCalledExactlyOnceWith('Okay, thank you.');
     });
   });
+
+  // ---- Seen in a real Edge log, 2026-10-21: "Thank you for your details" and the mic came back on
+
+  describe('ending the conversation', () => {
+    it('recognises closing phrases, and not real requests', () => {
+      for (const t of ['Thank you for your details.', 'Thank you.', 'thanks', 'Okay, thank you.', "That's all", 'bye', 'No thanks', 'Dhanyavaad', 'shukriya', 'Nandri'])
+        expect(isClosing(t), t).toBe(true);
+      for (const t of ['thank you, now show my cows', 'how much did I spend today', 'okay show crops', 'thanks for the feed bill of 500'])
+        expect(isClosing(t), t).toBe(false);
+    });
+
+    it('hands-free off: after "thank you" the mic turns off with no follow-up window and no tone', async () => {
+      const { sim, mic, deps, recognisers } = setup({ reply: "You're welcome!" }, true, false);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('Thank you for your details.');
+      await vi.advanceTimersByTimeAsync(1000 + 100);
+      expect(deps.submit).toHaveBeenCalledExactlyOnceWith('Thank you for your details.');
+      expect(sim.state).toBe('off');
+      deps.chime.mockClear();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(recognisers.filter((r) => r.running)).toHaveLength(0);
+      expect(deps.chime).not.toHaveBeenCalled();
+    });
+
+    it('hands-free on: after "thank you" it goes back to waiting for "Alexa" (that is what hands-free means)', async () => {
+      const { sim, mic } = setup({ reply: "You're welcome!" }, true, true);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('thanks');
+      await vi.advanceTimersByTimeAsync(2000 + 100);
+      expect(sim.state).toBe('ready');
+    });
+  });
 });
+
