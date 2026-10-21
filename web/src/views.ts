@@ -8,7 +8,7 @@ import { append, badge, clear, h, icon, label, notice, pageHeader, shortDate, sp
 import { VoiceSimulator, type SimState, type SimView } from './simulator.js';
 import { createRecognition, plainText, loadVoicePrefs, loadVoices, voicesFor, lastSpeakSkippedFor, saveVoicePrefs, speak, speechInputSupported, speechOutputSupported, stopSpeaking, VOICE_LANGUAGES } from './voice.js';
 
-const CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'other'];
+const CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'fertilizer', 'tractor_rent', 'crop_protection', 'other'];
 const ACTIVITY_TYPES = ['milking', 'vaccination', 'sowing', 'harvesting', 'irrigation', 'other'];
 const PERIODS: Array<[string, string]> = [
   ['today', 'Today'],
@@ -16,6 +16,7 @@ const PERIODS: Array<[string, string]> = [
   ['last_7_days', 'Last 7 days'],
   ['this_month', 'This month'],
   ['last_month', 'Last month'],
+  ['last_6_months', 'Last 6 months'],
 ];
 
 interface EntryView {
@@ -639,7 +640,7 @@ export async function fillCard(body: HTMLElement, load: () => Promise<Node>) {
 export const breakdown = (rows: Array<{ name: string; value: string; count: number }>) =>
   h('ul', { class: 'breakdown' }, ...rows.map((r) => h('li', {}, h('span', {}, `${label(r.name)} `, h('span', { class: 'muted small' }, `(${r.count})`)), h('strong', {}, r.value))));
 
-const CATEGORY_ICONS: Record<string, IconName> = { feed: 'leaf', fodder: 'sprout', medicine: 'pill', labour: 'user', fuel: 'fuel', equipment: 'wrench', seed: 'sprout', other: 'dots' };
+const CATEGORY_ICONS: Record<string, IconName> = { feed: 'leaf', fodder: 'sprout', medicine: 'pill', labour: 'user', fuel: 'fuel', equipment: 'wrench', seed: 'sprout', fertilizer: 'leaf', tractor_rent: 'wrench', crop_protection: 'leaf', other: 'dots' };
 /** Expense categories (or milk, activities) as rows with an icon, a label and a right-aligned value. */
 const iconRows = (rows: Array<{ icon: IconName; name: string; count?: number; value: string }>) =>
   h(
@@ -801,6 +802,38 @@ export function todayView(): HTMLElement {
 
 // ---------------------------------------------------------------- Expenses
 
+interface MonthGroup {
+  key: string;
+  totalDisplay: string;
+  entryCount: number;
+  categories?: Array<{ key: string; totalDisplay: string; entryCount: number }>;
+}
+
+/** Each of the last six months with its categories, and the six-month total (all worked out by the server). */
+async function monthlyExpenses(): Promise<Node> {
+  const { data } = await readTool<Omit<ExpenseSummary, 'groups'> & { groups: MonthGroup[] }>('get_expense_summary', { period: 'last_6_months', groupBy: 'month' });
+  if (data.entryCount === 0) return emptyState('chart', 'No expenses in the last 6 months.');
+  const monthName = (key: string) => new Date(`${key}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return h(
+    'div',
+    {},
+    h('p', { class: 'big' }, data.totalDisplay),
+    h('p', { class: 'muted small' }, `${plural(data.entryCount, 'expense', 'expenses')} from ${shortDate(data.range.from)} to ${shortDate(data.range.to)}`),
+    h(
+      'ul',
+      { class: 'breakdown' },
+      ...data.groups.map((g) =>
+        h(
+          'li',
+          { class: 'month-row' },
+          h('span', {}, h('strong', {}, monthName(g.key)), h('span', { class: 'muted small block' }, (g.categories ?? []).map((c) => `${label(c.key)} ${c.totalDisplay}`).join(' · '))),
+          h('strong', {}, g.totalDisplay),
+        ),
+      ),
+    ),
+  );
+}
+
 export function expensesView(): HTMLElement {
   let period = 'this_month';
   let category = '';
@@ -847,6 +880,8 @@ export function expensesView(): HTMLElement {
     select('Category', [['', 'All categories'], ...CATEGORIES.map((c): [string, string] => [c, label(c)])], category, (v) => ((category = v), void loadPage())),
   );
   void loadPage();
+  const months = h('div');
+  void fillCard(months, monthlyExpenses);
   return h(
     'section',
     { class: 'view' },
@@ -854,6 +889,7 @@ export function expensesView(): HTMLElement {
     h('div', { class: 'card filter-card' }, filters, total),
     list,
     more,
+    card('Last 6 months by month', months, { icon: 'chart' }),
   );
 }
 

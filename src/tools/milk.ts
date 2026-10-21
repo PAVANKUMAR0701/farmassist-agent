@@ -105,7 +105,7 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: {
         ...dateRangeInput,
         ...animalRefInput,
-        groupBy: z.enum(['day', 'animal']).default('day'),
+        groupBy: z.enum(['day', 'animal', 'animal_day']).default('day').describe('"animal_day": totals by animal, plus the litres of each animal per day in animalDays.'),
       },
       outputSchema: {
         range: z.object({ from: z.string(), to: z.string(), label: z.string() }),
@@ -120,6 +120,10 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
           .array(z.object({ date: z.string(), session: z.string(), animalName: z.string(), litresDisplay: z.string() }))
           .optional()
           .describe(`Each milk record, oldest first, when there are at most ${MAX_LISTED_RECORDS}. "whole herd" means it was not recorded for one animal.`),
+        animalDays: z
+          .array(z.object({ animalName: z.string(), totalDisplay: z.string(), days: z.array(z.object({ date: z.string(), millilitres: z.number().int(), display: z.string() })) }))
+          .optional()
+          .describe('With groupBy "animal_day": the milk of each animal per day (morning and evening added up).'),
         calculatedBy: z.literal('server'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -140,8 +144,14 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
         if (animal) entries = entries.filter((m) => m.data.animalId === animal.id);
         const total = entries.reduce((sum, m) => sum + m.data.millilitres, 0);
         const groups = new Map<string, { millilitres: number; entryCount: number }>();
+        const perAnimalDay = new Map<string, Map<string, number>>();
         for (const m of entries) {
           const key = args.groupBy === 'day' ? m.data.date : (m.data.animalName ?? 'whole herd');
+          if (args.groupBy === 'animal_day') {
+            const days = perAnimalDay.get(key) ?? new Map<string, number>();
+            days.set(m.data.date, (days.get(m.data.date) ?? 0) + m.data.millilitres);
+            perAnimalDay.set(key, days);
+          }
           const g = groups.get(key) ?? { millilitres: 0, entryCount: 0 };
           g.millilitres += m.data.millilitres;
           g.entryCount++;
@@ -168,6 +178,15 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
           ...(average !== undefined ? { averagePerRecordedDayDisplay: formatLitres(average) } : {}),
           groups: sorted,
           ...(records ? { records } : {}),
+          ...(args.groupBy === 'animal_day'
+            ? {
+                animalDays: sorted.map((g) => ({
+                  animalName: g.key,
+                  totalDisplay: g.display,
+                  days: [...(perAnimalDay.get(g.key) ?? [])].sort(([a], [b]) => a.localeCompare(b)).map(([date, millilitres]) => ({ date, millilitres, display: formatLitres(millilitres) })),
+                })),
+              }
+            : {}),
           calculatedBy: 'server' as const,
         };
         const whose = animal?.data.name ? ` from ${animal.data.name}` : '';
@@ -177,7 +196,7 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
           entries.length === 0
             ? `No milk recorded${whose} from ${range.from} to ${range.to}.`
             : `Milk${whose} from ${range.from} to ${range.to}: ${structured.totalDisplay} over ${plural(days, 'day')} with records (average ${structured.averagePerRecordedDayDisplay} per day).` +
-              (args.groupBy === 'animal' && sorted.length > 0 ? ` By animal: ${sorted.map((g) => `${g.key} ${g.display}`).join(', ')}.` : '') +
+              (args.groupBy !== 'day' && sorted.length > 0 ? ` By animal: ${sorted.map((g) => `${g.key} ${g.display}`).join(', ')}.` : '') +
               (records ? ` Records: ${records.map((r) => `${r.date} ${r.session.replace("_", " ")} ${r.animalName} ${r.litresDisplay}`).join('; ')}.` : '');
         return { content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }], structuredContent: structured };
       }),

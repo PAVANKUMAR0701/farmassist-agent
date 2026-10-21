@@ -4,7 +4,7 @@ import type { FarmRecord, RecordStore } from '../repositories/record-store.js';
 import { daysBetween, isValidIsoDate } from '../shared/time.js';
 import { ToolUserError } from './tool-errors.js';
 
-export const ANIMAL_TYPES = ['cow', 'buffalo', 'bull', 'calf', 'heifer', 'goat', 'sheep', 'other'] as const;
+export const ANIMAL_TYPES = ['cow', 'buffalo', 'bull', 'calf', 'heifer', 'goat', 'sheep', 'chicken', 'other'] as const;
 export type AnimalType = (typeof ANIMAL_TYPES)[number];
 export const ANIMAL_STATUSES = ['active', 'sold', 'died'] as const;
 
@@ -20,6 +20,29 @@ export interface AnimalData extends Record<string, unknown> {
   status: (typeof ANIMAL_STATUSES)[number];
   statusDate?: string;
   notes?: string;
+  /** Set by imported demo data (src/demo/krishna-farm.ts); the farmer's own records do not have these. */
+  nameKn?: string;
+  motherId?: string;
+  lactationStatus?: string;
+  healthStatus?: string;
+  usualDailyMillilitres?: number;
+  purchaseValuePaise?: number;
+  milkFeeding?: string;
+  sourceId?: string;
+  demo?: boolean;
+}
+
+/** Insurance counts as "due soon" this many days before it ends. */
+export const INSURANCE_DUE_SOON_DAYS = 30;
+export type InsuranceStatus = 'overdue' | 'due_soon' | 'active';
+
+/**
+ * A policy's status worked out from its end date on `today` (farm time): overdue once the end date has passed,
+ * due soon within INSURANCE_DUE_SOON_DAYS, active otherwise. Stored statuses are never trusted for this.
+ */
+export function insuranceStatus(endDate: string, today: string): { status: InsuranceStatus; daysLeft: number } {
+  const daysLeft = daysBetween(today, endDate);
+  return { status: daysLeft < 0 ? 'overdue' : daysLeft <= INSURANCE_DUE_SOON_DAYS ? 'due_soon' : 'active', daysLeft };
 }
 
 export const animalRefInput = {
@@ -95,5 +118,10 @@ export function countByType(animals: ReadonlyArray<{ type: string }>): Array<{ t
 }
 
 const PLURAL_TYPES: Record<string, string> = { calf: 'calves', sheep: 'sheep', buffalo: 'buffaloes' };
+
+/** Shown with every imported demo record, so nobody takes it for a real farm's data. */
+export const DEMO_NOTICE = 'Demo data: synthetic records for a demo farm, not real farm records.';
+/** Shown with every treatment or vaccination record. FarmAssist never gives medicine or dose advice. */
+export const VET_NOTICE = 'A veterinarian must decide any medicine, dose and milk withdrawal period; these records are not veterinary advice.';
 export const describeCounts = (counts: Array<{ type: string; count: number }>) =>
   counts.map((c) => `${c.count} ${c.count === 1 ? c.type : (PLURAL_TYPES[c.type] ?? `${c.type}s`)}`).join(', ');

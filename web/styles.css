@@ -1092,3 +1092,26 @@ body { background: var(--paper); color: var(--navy); font-family: 'Segoe UI Vari
 .voice-pick .ico { width: 16px; height: 16px; }
 .voice-pick select { min-height: 36px; padding: 4px 8px; background: rgba(0, 0, 0, 0.25); color: #eef6f0; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; font-size: 0.82rem; }
 .voice-pick select option { color: #13213a; }
+
+/* Farm records: herd list with profiles, per-day tables, demo notices (2026-10-21) */
+.scroll-list { max-height: 420px; overflow-y: auto; overscroll-behavior: contain; }
+.entries > li > .entry-button { width: 100%; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.entry-button:hover, .entry-button:focus-visible { background: var(--surface-2); }
+.entry-button > div { flex: 1; min-width: 0; display: grid; }
+.table-wrap { overflow-x: auto; margin-top: 10px; max-width: 100%; }
+.grid-table { border-collapse: collapse; width: 100%; font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+.grid-table th, .grid-table td { padding: 6px 8px; border-top: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.grid-table thead th { color: var(--muted); font-weight: 600; border-top: 0; }
+.grid-table th[scope='row'], .grid-table thead th:first-child { text-align: left; font-weight: 600; }
+.demo-notes { margin-top: 10px; display: grid; gap: 2px; }
+.demo-notes p { margin: 0; }
+.small.strong { font-weight: 650; margin: 12px 0 0; }
+.block { display: block; }
+.month-row > span { min-width: 0; }
+.profile-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: inherit; padding: 20px; box-shadow: var(--shadow); }
+.profile-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 0.9rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .facts { grid-template-columns: minmax(0, 1fr); } .facts dd { margin-bottom: 6px; } }
+@media (max-width: 420px) { .entry-button .badge { display: none; } }

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { farmIdFromAuth } from '../auth/bearer.js';
 import { ConcurrentModificationError, IdempotencyConflictError } from '../repositories/ledger-repository.js';
 import { newRecordId, type FarmRecord } from '../repositories/record-store.js';
+import { formatPaise } from '../shared/money.js';
+import { formatLitres } from '../shared/quantity.js';
 import { todayInFarmTimeZone } from '../shared/time.js';
 import {
   ageDisplay,
@@ -49,6 +51,17 @@ export const animalViewSchema = z.object({
   statusDate: z.string().optional(),
   notes: z.string().optional(),
   insuredUntil: z.string().optional().describe('End date of the latest insurance policy, if any.'),
+  nameKn: z.string().optional().describe('Name in Kannada, if recorded.'),
+  motherId: z.string().optional(),
+  lactationStatus: z.string().optional(),
+  healthStatus: z.string().optional(),
+  usualDailyMillilitres: z.number().int().optional(),
+  usualDailyDisplay: z.string().optional().describe('Usual milk per day as recorded on the animal.'),
+  purchaseValuePaise: z.number().int().optional(),
+  purchaseValueDisplay: z.string().optional(),
+  milkFeeding: z.string().optional(),
+  sourceId: z.string().optional().describe('Id in the imported demo data, e.g. COW-001.'),
+  demo: z.boolean().optional().describe('True for imported demo data (not real farm records).'),
 });
 
 export function toAnimalView(record: FarmRecord<AnimalData>, today: string, insuredUntil?: string): z.infer<typeof animalViewSchema> {
@@ -57,6 +70,8 @@ export function toAnimalView(record: FarmRecord<AnimalData>, today: string, insu
   const age = status === 'active' ? ageDisplay(record.data.birthDate, today) : undefined;
   if (age) view.age = age;
   if (insuredUntil) view.insuredUntil = insuredUntil;
+  if (record.data.usualDailyMillilitres !== undefined) view.usualDailyDisplay = formatLitres(record.data.usualDailyMillilitres);
+  if (record.data.purchaseValuePaise !== undefined) view.purchaseValueDisplay = formatPaise(record.data.purchaseValuePaise);
   return view as z.infer<typeof animalViewSchema>;
 }
 

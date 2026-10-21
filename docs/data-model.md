@@ -56,6 +56,12 @@ Herd, milk, crops, harvests, insurance and reminders use one generic, farm-scope
 | Harvest | `hrv_<cropUlid>_<ulid>` | `HARVEST#<cropUlid>#<ulid>` | grams (integer), date |
 | Insurance | `ins_<ulid>` | `INSURANCE#<ulid>` | animal, insurer, policy number, start and end dates, premium and cover in paise |
 | Reminder | `rem_<yyyymmdd>_<ulid>` | `REMINDER#<date>#<ulid>` | title, due date, animal, status (open, done) |
+| Eggs | `egg_<yyyymmdd>_<ulid>` | `EGG#<date>#<ulid>` | chicken, eggs collected, eggs damaged |
+| Treatment | `trt_<yyyymmdd>_<ulid>` | `TREATMENT#<date>#<ulid>` | animal, symptoms, medicine and dose as recorded, veterinarian, follow-up date, status, withdrawal period |
+| Vaccination | `vac_<ulid>` | `VACCINATION#<ulid>` | animal, vaccine, date given, next due date |
+| Feed stock | `feed_<ulid>` | `FEED#<ulid>` | item, quantity, unit, reorder level, last updated |
 | Conversation | — | `CONV#<userId>#<conversationId>` | agent state, 24 h TTL (chat Lambda only) |
 
-Every record carries `version` for optimistic locking. Creates use the same `IDEM#<clientRequestId>` transaction as expenses, so retries never duplicate. Dated kinds (milk, reminders) are read with a sort-key range, and harvests by crop.
+Eggs, treatments, vaccinations and feed stock were added on 2026-10-21 for the Krishna Farm demo data, which is imported with stable ids and upserts (`upsert` on the record store, `upsertExpense` on the ledger): see [demo-data.md](demo-data.md). Expense categories now also include `fertilizer`, `tractor_rent` and `crop_protection`.
+
+Every record carries `version` for optimistic locking. Creates use the same `IDEM#<clientRequestId>` transaction as expenses, so retries never duplicate. Dated kinds (milk, reminders, eggs, treatments) are read with a sort-key range, and harvests by crop.

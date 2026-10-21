@@ -135,6 +135,26 @@ export class DynamoLedgerRepository implements LedgerRepository {
     return this.putWithIdempotency(item, timestamp, idempotency, toExpense);
   }
 
+  async upsertExpense(entry: ExpenseEntry): Promise<void> {
+    const parsed = parseExpenseEntryId(entry.entryId);
+    if (!parsed || parsed.date !== entry.date) throw new Error(`Invalid expense id ${entry.entryId}`);
+    const item: ExpenseItem = {
+      PK: keys.farm(entry.farmId),
+      SK: keys.expense(entry.date, parsed.ulid),
+      type: 'EXPENSE',
+      entryId: entry.entryId,
+      farmId: entry.farmId,
+      date: entry.date,
+      category: entry.category,
+      amountPaise: entry.amountPaise,
+      ...(entry.note ? { note: entry.note } : {}),
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      version: entry.version,
+    };
+    await this.client.send(new PutCommand({ TableName: this.tableName, Item: item }));
+  }
+
   async createActivity(input: NewActivity, idempotency?: Idempotency): Promise<CreateResult<FarmActivity>> {
     const timestamp = this.now();
     const entryId = newActivityEntryId(input.date);

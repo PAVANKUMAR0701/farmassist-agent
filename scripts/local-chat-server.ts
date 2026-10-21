@@ -6,8 +6,9 @@
  * Set AGENT_MODEL_ID (+ BEDROCK_AWS_PROFILE) to chat through Bedrock; otherwise the deterministic parser answers.
  *
  *   npm run build:web && npm run start:chat
+ *   npx tsx scripts/local-chat-server.ts --krishna     # with the Krishna Farm demo data (data/krishna-farm)
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { FarmMcpClient } from '../src/agent/mcp-client.js';
 import { createAgentModelFromEnv } from '../src/agent/model.js';
@@ -21,6 +22,7 @@ import { WEB_ASSETS } from '../src/chat/web-assets.generated.js';
 import { handleMcpRequest } from '../src/mcp/http.js';
 import { InMemoryLedgerRepository } from '../src/repositories/memory-ledger-repository.js';
 import { InMemoryRecordStore } from '../src/repositories/record-store.js';
+import { applyImportPlan, checkKrishnaSeed, planKrishnaImport } from '../src/demo/krishna-farm.js';
 import { createNarratorFromEnv } from '../src/services/insight-narrator.js';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
@@ -34,10 +36,11 @@ if (!mcpToken) throw new Error('FARMASSIST_API_TOKEN is required with FARMASSIST
 
 // In-process MCP server (in-memory ledger) unless a real endpoint was given.
 const ledger = new InMemoryLedgerRepository();
+const records = new InMemoryRecordStore();
 const localMcp = {
   allowedOrigins: [] as string[],
   apiTokens: [{ token: mcpToken, farmId, clientId: 'local-chat' }],
-  deps: { ledger, records: new InMemoryRecordStore(), now: () => new Date(), narrator: createNarratorFromEnv() },
+  deps: { ledger, records, now: () => new Date(), narrator: createNarratorFromEnv() },
 };
 const tools = new FarmMcpClient({
   url: remoteMcpUrl ?? 'http://in-process/mcp',
@@ -71,7 +74,11 @@ async function seedSampleFarm(): Promise<void> {
   }
   console.log('Seeded a sample farm (5 animals, 7 days of milk, 2 crops, insurance, a reminder, 2 expenses).');
 }
-if (process.argv.includes('--seed') && !remoteMcpUrl) await seedSampleFarm();
+if (process.argv.includes('--krishna') && !remoteMcpUrl) {
+  const check = checkKrishnaSeed(JSON.parse(readFileSync('data/krishna-farm/krishna_farm_demo_seed.json', 'utf8')));
+  if (!check.seed) throw new Error(`Krishna Farm seed: ${check.errors.join('; ')}`);
+  console.log(`Imported the Krishna Farm demo data: ${await applyImportPlan(planKrishnaImport(check.seed, farmId), { ledger, records })} items.`);
+} else if (process.argv.includes('--seed') && !remoteMcpUrl) await seedSampleFarm();
 
 const deps: ChatAppDeps = {
   vision: createVisionModelFromEnv(),

@@ -140,6 +140,14 @@ export class DynamoRecordStore implements RecordStore {
     }
   }
 
+  async upsert<T extends Record<string, unknown>>(farmId: string, id: string, data: T, at: string) {
+    const parsed = parseRecordId(id);
+    if (!parsed) throw new Error(`Invalid record id ${id}`);
+    const item: RecordItem = { PK: `FARM#${farmId}`, SK: parsed.sortKey, type: 'RECORD', kind: parsed.kind, entryId: id, farmId, data, createdAt: at, updatedAt: at, version: 1 };
+    await this.client.send(new PutCommand({ TableName: this.tableName, Item: item }));
+    return toRecord<T>(item);
+  }
+
   async list<T extends Record<string, unknown>>(farmId: string, kind: RecordKind, query: RecordQuery = {}) {
     const { lo, hi } = sortKeyRange(kind, query);
     const items: RecordItem[] = [];

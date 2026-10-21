@@ -23,6 +23,8 @@ const CATEGORY_WORDS: Record<string, string> = {
   equipment: 'equipment',
   seed: 'seed',
   seeds: 'seed',
+  fertilizer: 'fertilizer',
+  fertiliser: 'fertilizer',
 };
 const CATEGORY = Object.keys(CATEGORY_WORDS).join('|');
 const MONEY = String.raw`₹\s?(\d[\d,]*(?:\.\d+)?)`;

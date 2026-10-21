@@ -10,11 +10,15 @@
  *   harvest    hrv_<cropUlid>_<ulid>      HARVEST#<cropUlid>#<ulid>
  *   insurance  ins_<ulid>                 INSURANCE#<ulid>
  *   reminder   rem_<yyyymmdd>_<ulid>      REMINDER#<yyyy-mm-dd>#<ulid>
+ *   egg        egg_<yyyymmdd>_<ulid>      EGG#<yyyy-mm-dd>#<ulid>
+ *   treatment  trt_<yyyymmdd>_<ulid>      TREATMENT#<yyyy-mm-dd>#<ulid>
+ *   vaccination vac_<ulid>                VACCINATION#<ulid>
+ *   feed stock feed_<ulid>                FEED#<ulid>
  */
 import { ulid } from 'ulid';
 import { ConcurrentModificationError, EntryNotFoundError, IdempotencyConflictError, MAX_SUMMARY_ENTRIES, TooManyEntriesError, type Idempotency } from './ledger-repository.js';
 
-export type RecordKind = 'animal' | 'milk' | 'crop' | 'harvest' | 'insurance' | 'reminder';
+export type RecordKind = 'animal' | 'milk' | 'crop' | 'harvest' | 'insurance' | 'reminder' | 'egg' | 'treatment' | 'vaccination' | 'feed';
 
 export interface FarmRecord<T = Record<string, unknown>> {
   id: string;
@@ -27,7 +31,7 @@ export interface FarmRecord<T = Record<string, unknown>> {
 }
 
 const ULID = '[0-9A-HJKMNP-TV-Z]{26}';
-const DATED: Partial<Record<RecordKind, true>> = { milk: true, reminder: true };
+const DATED: Partial<Record<RecordKind, true>> = { milk: true, reminder: true, egg: true, treatment: true };
 const PREFIX: Record<RecordKind, { id: string; sk: string }> = {
   animal: { id: 'ani', sk: 'ANIMAL' },
   milk: { id: 'milk', sk: 'MILK' },
@@ -35,11 +39,19 @@ const PREFIX: Record<RecordKind, { id: string; sk: string }> = {
   harvest: { id: 'hrv', sk: 'HARVEST' },
   insurance: { id: 'ins', sk: 'INSURANCE' },
   reminder: { id: 'rem', sk: 'REMINDER' },
+  egg: { id: 'egg', sk: 'EGG' },
+  treatment: { id: 'trt', sk: 'TREATMENT' },
+  vaccination: { id: 'vac', sk: 'VACCINATION' },
+  feed: { id: 'feed', sk: 'FEED' },
 };
 
 /** A new id. Dated kinds need `date` (YYYY-MM-DD); harvests need the crop's id. */
 export function newRecordId(kind: RecordKind, opts: { date?: string; cropId?: string } = {}): string {
-  const id = ulid();
+  return recordIdWith(kind, ulid(), opts);
+}
+
+/** The id of a kind with a given ULID (seeded demo records use stable ULIDs, see src/domain/stable-id.ts). */
+export function recordIdWith(kind: RecordKind, id: string, opts: { date?: string; cropId?: string } = {}): string {
   if (DATED[kind]) return `${PREFIX[kind].id}_${opts.date!.replaceAll('-', '')}_${id}`;
   if (kind === 'harvest') return `hrv_${parseRecordId(opts.cropId ?? '')!.ulid}_${id}`;
   return `${PREFIX[kind].id}_${id}`;
@@ -101,6 +113,11 @@ export interface RecordStore {
   update<T extends Record<string, unknown>>(farmId: string, id: string, expectedVersion: number, data: T): Promise<FarmRecord<T>>;
   /** Every record of a kind (oldest first by sort key). Throws TooManyEntriesError above MAX_SUMMARY_ENTRIES. */
   list<T extends Record<string, unknown>>(farmId: string, kind: RecordKind, query?: RecordQuery): Promise<Array<FarmRecord<T>>>;
+  /**
+   * Writes a record with a known id, replacing whatever is stored under it (version 1, timestamps `at`).
+   * Only for importing seed data with stable ids: re-running the import rewrites the same items, never adds more.
+   */
+  upsert<T extends Record<string, unknown>>(farmId: string, id: string, data: T, at: string): Promise<FarmRecord<T>>;
 }
 
 /** In-memory store for tests and keyless local development. Mirrors the DynamoDB behaviour. */
@@ -149,6 +166,14 @@ export class InMemoryRecordStore implements RecordStore {
     const updated: FarmRecord = { ...current, data: structuredClone(data), updatedAt: this.now().toISOString(), version: current.version + 1 };
     this.items.set(this.key(farmId, id), updated);
     return structuredClone(updated) as FarmRecord<T>;
+  }
+
+  async upsert<T extends Record<string, unknown>>(farmId: string, id: string, data: T, at: string) {
+    const parsed = parseRecordId(id);
+    if (!parsed) throw new Error(`Invalid record id ${id}`);
+    const record: FarmRecord<T> = { id, kind: parsed.kind, farmId, data: structuredClone(data), createdAt: at, updatedAt: at, version: 1 };
+    this.items.set(this.key(farmId, id), record as FarmRecord);
+    return structuredClone(record);
   }
 
   async list<T extends Record<string, unknown>>(farmId: string, kind: RecordKind, query: RecordQuery = {}) {

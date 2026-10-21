@@ -29,7 +29,7 @@ do {
   start = page.LastEvaluatedKey;
 } while (start);
 
-const names: Record<string, string> = { EXP: 'expenses', ACT: 'activities', CORR: 'correction audit records', IDEM: 'retry markers', CONV: 'chat conversations', ANIMAL: 'animals', MILK: 'milk records', CROP: 'crop cycles', HARVEST: 'harvests', INSURANCE: 'insurance policies', REMINDER: 'reminders' };
+const names: Record<string, string> = { EXP: 'expenses', ACT: 'activities', CORR: 'correction audit records', IDEM: 'retry markers', CONV: 'chat conversations', ANIMAL: 'animals', MILK: 'milk records', CROP: 'crop cycles', HARVEST: 'harvests', INSURANCE: 'insurance policies', REMINDER: 'reminders', EGG: 'egg records', TREATMENT: 'treatments', VACCINATION: 'vaccinations', FEED: 'feed stock items' };
 console.log(`Farm "${farmId}" in table ${table}: ${keys.length} items`);
 for (const [kind, n] of [...byKind].sort()) console.log(`  ${n}\t${names[kind] ?? kind}`);
 

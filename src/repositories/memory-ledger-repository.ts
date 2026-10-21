@@ -49,6 +49,11 @@ export class InMemoryLedgerRepository implements LedgerRepository {
     }));
   }
 
+  async upsertExpense(entry: ExpenseEntry): Promise<void> {
+    if (!parseEntryId(entry.entryId)) throw new Error(`Invalid expense id ${entry.entryId}`);
+    this.expenses.set(entry.entryId, structuredClone(entry));
+  }
+
   async createActivity(input: NewActivity, idempotency?: Idempotency): Promise<CreateResult<FarmActivity>> {
     return this.createWithIdempotency(this.activities, input.farmId, idempotency, (timestamp) => ({
       entryId: newActivityEntryId(input.date),

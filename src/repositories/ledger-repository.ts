@@ -55,6 +55,11 @@ export interface LedgerRepository {
    * expectedVersion. Throws EntryNotFoundError or ConcurrentModificationError otherwise.
    */
   correctExpense(input: CorrectExpenseInput): Promise<{ entry: ExpenseEntry; correction: CorrectionRecord }>;
+  /**
+   * Writes an expense with a known id, replacing whatever is stored under it. Only for importing seed data with
+   * stable ids, so re-running the import never adds a second copy.
+   */
+  upsertExpense(entry: ExpenseEntry): Promise<void>;
   /** Audit trail for one expense, oldest first. */
   getCorrections(farmId: string, entryId: string): Promise<CorrectionRecord[]>;
 

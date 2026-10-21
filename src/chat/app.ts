@@ -64,6 +64,11 @@ export const READ_TOOLS = new Set([
   'get_milk_value',
   'list_crops',
   'list_reminders',
+  'list_insurance',
+  'get_egg_summary',
+  'get_health_records',
+  'get_feed_stock',
+  'get_animal_profile',
 ]);
 export const MAX_MESSAGE_LENGTH = 500;
 const MAX_BODY_BYTES = 16 * 1024;

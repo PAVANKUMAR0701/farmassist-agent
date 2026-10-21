@@ -11,20 +11,21 @@ import { runTool, ToolUserError } from './tool-errors.js';
 const inputSchema = {
   ...dateRangeInput,
   category: categoryFilterInput,
-  groupBy: z.enum(['category', 'day']).default('category').describe('Break the total down by category or by day.'),
+  groupBy: z.enum(['category', 'day', 'month']).default('category').describe('Break the total down by category, by day, or by month (each month also by category).'),
 };
 
-const groupSchema = z.object({
-  key: z.string().describe('Category name or YYYY-MM-DD date'),
+const totalSchema = z.object({
+  key: z.string().describe('Category name, YYYY-MM-DD date or YYYY-MM month'),
   totalPaise: z.number().int(),
   totalDisplay: z.string(),
   entryCount: z.number().int(),
 });
+const groupSchema = totalSchema.extend({ categories: z.array(totalSchema).optional().describe('Month groups: that month by category.') });
 
 const outputSchema = {
   range: rangeOutputSchema,
   category: z.string().optional(),
-  groupBy: z.enum(['category', 'day']),
+  groupBy: z.enum(['category', 'day', 'month']),
   totalPaise: z.number().int(),
   totalDisplay: z.string(),
   entryCount: z.number().int(),
@@ -65,7 +66,11 @@ export function registerGetExpenseSummary(server: McpServer, deps: ToolDeps): vo
           totalPaise: summary.totalPaise,
           totalDisplay: formatPaise(summary.totalPaise),
           entryCount: summary.entryCount,
-          groups: summary.groups.map((g) => ({ ...g, totalDisplay: formatPaise(g.totalPaise) })),
+          groups: summary.groups.map((g) => ({
+            ...g,
+            totalDisplay: formatPaise(g.totalPaise),
+            ...(g.categories ? { categories: g.categories.map((c) => ({ ...c, totalDisplay: formatPaise(c.totalPaise) })) } : {}),
+          })),
           calculatedBy: 'server' as const,
         };
         const what = args.category ? `on ${args.category}` : 'in total';
@@ -73,7 +78,8 @@ export function registerGetExpenseSummary(server: McpServer, deps: ToolDeps): vo
         const text =
           summary.entryCount === 0
             ? `No expenses ${args.category ? `on ${args.category} ` : ''}recorded from ${range.from} to ${range.to}. Total: ${structured.totalDisplay}.`
-            : `Spent ${structured.totalDisplay} ${what} from ${range.from} to ${range.to} (${summary.entryCount} ${entriesWord}).`;
+            : `Spent ${structured.totalDisplay} ${what} from ${range.from} to ${range.to} (${summary.entryCount} ${entriesWord}).` +
+              (args.groupBy !== 'month' ? '' : ` By month: ${structured.groups.map((g) => `${g.key.replaceAll('_', ' ')} ${g.totalDisplay}`).join(', ')}.`);
         return {
           content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }],
           structuredContent: structured,

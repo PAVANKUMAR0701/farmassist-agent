@@ -27,6 +27,9 @@ const CATEGORY_WORDS: Array<[ExpenseCategory, RegExp]> = [
   ['feed', /\b(feed|cattle feed|concentrate|bran|oil ?cake|khal)\b/],
   ['medicine', /\b(medicines?|vet|veterinary|doctor|injections?|dewormer|deworming|tablets?)\b/],
   ['labour', /\b(labou?r|wages?|workers?|salary|helper)\b/],
+  ['fertilizer', /\b(fertili[sz]ers?|urea|dap|potash|manure|compost)\b/],
+  ['crop_protection', /\b(pesticides?|insecticides?|fungicides?|weedicides?|neem oil)\b/],
+  ['tractor_rent', /\b(tractor (hire|rent)|rotavator|plough(ing)?|trailer)\b/],
   ['fuel', /\b(diesel|petrol|fuel|kerosene)\b/],
   ['equipment', /\b(equipment|tools?|pump|repairs?|spare parts?|tractor parts?)\b/],
   ['seed', /\b(seeds?|saplings?)\b/],
@@ -43,6 +46,7 @@ const ACTIVITY_WORDS: Array<[ActivityType, RegExp]> = [
 const PERIOD_WORDS: Array<[NamedPeriod, RegExp]> = [
   ['last_7_days', /\b(last|past) (7|seven) days\b/],
   ['this_week', /\bthis week\b/],
+  ['last_6_months', /\b(last|past) (6|six) months\b/],
   ['last_month', /\blast month\b/],
   ['this_month', /\bthis month\b/],
   ['yesterday', /\byesterday\b/],
@@ -178,7 +182,7 @@ export function decideFallback(message: string, context: FallbackContext, today:
 
   // 8. Expenses: "spent 2500 on feed", "paid ₹800 for medicine", "bought diesel 1200".
   if (amount !== undefined) {
-    if (!category) return { kind: 'reply', text: `What was the ₹${amount} for? For example feed, fodder, medicine, labour, fuel, equipment or seed.` };
+    if (!category) return { kind: 'reply', text: `What was the ₹${amount} for? For example feed, fodder, medicine, labour, fuel, equipment, seed, fertilizer, tractor rent or crop protection.` };
     return { kind: 'tool', name: 'record_expense', args: { amountRupees: amount, category, note, ...dateArg(text, today) } };
   }
   if (category && /\b(spent|paid|bought|purchased)\b/.test(text)) {

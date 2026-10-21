@@ -4,6 +4,7 @@ import { FARM_TIME_ZONE, todayInFarmTimeZone } from '../shared/time.js';
 import { registerAnimalTools } from '../tools/animals.js';
 import { registerCorrectEntry } from '../tools/correct-entry.js';
 import { registerCropTools } from '../tools/crops.js';
+import { registerFarmRecordTools } from '../tools/farm-records.js';
 import { registerGetDailySummary } from '../tools/get-daily-summary.js';
 import { registerGetExpenseSummary } from '../tools/get-expense-summary.js';
 import { registerListActivities } from '../tools/list-activities.js';
@@ -30,7 +31,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       instructions:
-        'FarmAssist keeps the records of a small Indian farm: expenses, activities, the herd, milk, crops, insurance and reminders. ' +
+        'FarmAssist keeps the records of a small Indian farm: expenses, activities, the herd, milk, eggs, crops, insurance, animal health, feed stock and reminders. ' +
         'All money totals are calculated by the server; never compute or invent totals yourself.',
     },
   );
@@ -74,6 +75,7 @@ export function createFarmServer(deps: FarmServerDeps): McpServer {
   registerMilkTools(server, deps);
   registerCropTools(server, deps);
   registerReminderTools(server, deps);
+  registerFarmRecordTools(server, deps);
 
   return server;
 }

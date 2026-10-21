@@ -1,6 +1,6 @@
 import { newEntryId, parseEntryId } from './entry-id.js';
 
-export const EXPENSE_CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'other'] as const;
+export const EXPENSE_CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'fertilizer', 'tractor_rent', 'crop_protection', 'other'] as const;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
 export interface ExpenseEntry {

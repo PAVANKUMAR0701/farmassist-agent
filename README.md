@@ -130,11 +130,20 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
 
 4. **Check it.** Open the `WebAppUrl` output, and run the checks below against the `McpEndpoint` output.
 
+## Demo data: Krishna Farm
+
+A synthetic demo farm (32 animals, milk, eggs, expenses, crops, insurance, health records and feed stock) can be imported for demos. It is not real farm data. Mapping, validation and the demo query results are in [docs/demo-data.md](docs/demo-data.md).
+
+```bash
+npm run seed-krishna-farm                  # check only
+npm run seed-krishna-farm -- --apply       # upsert into farm KRISHNA-FARM (safe to re-run)
+```
+
 ## Tests and evaluations
 
 | Command | What it checks |
 |---|---|
-| `npm test` | 365 unit, protocol, Lambda and API tests (mocked AWS) |
+| `npm test` | Unit, protocol, Lambda and API tests (mocked AWS), including the Krishna Farm import and its demo queries |
 | `npm run smoke -- <McpEndpoint>` | 19 protocol and tool checks against a running server |
 | `npm run live-hardening -- <McpEndpoint>` | Simultaneous retries and corrections, and pagination, on the real table |
 | `npm run agent-eval -- --runs=2 <modelId>` | 13 conversation cases scored on tool choice, arguments, writes and reply style |

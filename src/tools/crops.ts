@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { farmIdFromAuth } from '../auth/bearer.js';
 import { ConcurrentModificationError, IdempotencyConflictError } from '../repositories/ledger-repository.js';
 import { newRecordId, type FarmRecord, type RecordStore } from '../repositories/record-store.js';
+import { formatPaise } from '../shared/money.js';
 import { acresToHundredths, formatAcres, formatMass, hasAtMostDecimals, MASS_UNITS, toGrams } from '../shared/quantity.js';
 import { daysBetween, todayInFarmTimeZone } from '../shared/time.js';
 import { optionalText, plural, sameName } from './farm-shared.js';
@@ -20,6 +21,18 @@ interface CropData extends Record<string, unknown> {
   status: 'growing' | 'harvested';
   harvestedDate?: string;
   notes?: string;
+  /** Set by imported demo data (src/demo/krishna-farm.ts): stage, costs and the sale figures of the season. */
+  stage?: string;
+  transplantedDate?: string;
+  expectedHarvestWindow?: string;
+  totalCostPaise?: number;
+  reportedYieldGrams?: number;
+  soldGrams?: number;
+  retainedGrams?: number;
+  grossRevenuePaise?: number;
+  netRevenuePaise?: number;
+  figuresToDate?: boolean;
+  demo?: boolean;
 }
 
 interface HarvestData extends Record<string, unknown> {
@@ -27,6 +40,9 @@ interface HarvestData extends Record<string, unknown> {
   date: string;
   grams: number;
   note?: string;
+  soldGrams?: number;
+  retainedGrams?: number;
+  salePaise?: number;
 }
 
 const quantity = (max: number) =>
@@ -53,11 +69,27 @@ const cropViewSchema = z.object({
   yieldPerAcreDisplay: z.string().optional().describe('Harvest divided by area, worked out by FarmAssist.'),
   harvestToSeedRatio: z.number().optional().describe('How many times the seed weight was harvested, worked out by FarmAssist.'),
   notes: z.string().optional(),
+  stage: z.string().optional().describe('growing, ongoing_harvest or harvested.'),
+  transplantedDate: z.string().optional(),
+  expectedHarvestWindow: z.string().optional(),
+  soldDisplay: z.string().optional(),
+  retainedDisplay: z.string().optional().describe('Kept back from the harvest (not sold).'),
+  revenuePaise: z.number().int().optional(),
+  revenueDisplay: z.string().optional().describe('Sale revenue.'),
+  costDisplay: z.string().optional().describe('Cultivation cost of this crop.'),
+  netDisplay: z.string().optional().describe('Revenue minus cultivation cost, before overheads.'),
+  figuresToDate: z.boolean().optional().describe('True when harvest and sale figures are so far in a harvest that continues.'),
+  demo: z.boolean().optional(),
 });
 
 function cropView(record: FarmRecord<CropData>, harvests: Array<FarmRecord<HarvestData>>, today: string): z.infer<typeof cropViewSchema> {
   const d = record.data;
-  const harvestedGrams = harvests.reduce((sum, h) => sum + h.data.grams, 0);
+  // Imported crops carry the season's reported yield, which can include pickings without a harvest record.
+  const harvestedGrams = Math.max(d.reportedYieldGrams ?? 0, harvests.reduce((sum, h) => sum + h.data.grams, 0));
+  const sum = (pick: (h: HarvestData) => number | undefined) => (harvests.some((h) => pick(h.data) !== undefined) ? harvests.reduce((n, h) => n + (pick(h.data) ?? 0), 0) : undefined);
+  const soldGrams = d.soldGrams ?? sum((h) => h.soldGrams);
+  const retainedGrams = d.retainedGrams ?? sum((h) => h.retainedGrams);
+  const revenuePaise = d.grossRevenuePaise ?? sum((h) => h.salePaise);
   const end = d.status === 'harvested' && d.harvestedDate ? d.harvestedDate : today;
   return {
     cropId: record.id,
@@ -76,6 +108,16 @@ function cropView(record: FarmRecord<CropData>, harvests: Array<FarmRecord<Harve
     ...(d.areaHundredths && harvestedGrams ? { yieldPerAcreDisplay: `${formatMass(Math.round((harvestedGrams * 100) / d.areaHundredths))} per acre` } : {}),
     ...(d.seedGrams && harvestedGrams ? { harvestToSeedRatio: Math.round((harvestedGrams / d.seedGrams) * 10) / 10 } : {}),
     ...(d.notes ? { notes: d.notes } : {}),
+    ...(d.stage ? { stage: d.stage } : {}),
+    ...(d.transplantedDate ? { transplantedDate: d.transplantedDate } : {}),
+    ...(d.expectedHarvestWindow ? { expectedHarvestWindow: d.expectedHarvestWindow } : {}),
+    ...(soldGrams !== undefined ? { soldDisplay: formatMass(soldGrams) } : {}),
+    ...(retainedGrams !== undefined ? { retainedDisplay: formatMass(retainedGrams) } : {}),
+    ...(revenuePaise !== undefined ? { revenuePaise, revenueDisplay: formatPaise(revenuePaise) } : {}),
+    ...(d.totalCostPaise !== undefined ? { costDisplay: formatPaise(d.totalCostPaise) } : {}),
+    ...(d.netRevenuePaise !== undefined ? { netDisplay: formatPaise(d.netRevenuePaise) } : revenuePaise !== undefined && d.totalCostPaise !== undefined ? { netDisplay: formatPaise(revenuePaise - d.totalCostPaise) } : {}),
+    ...(d.figuresToDate ? { figuresToDate: true } : {}),
+    ...(d.demo ? { demo: true } : {}),
   };
 }
 
@@ -228,8 +270,12 @@ export function registerCropTools(server: McpServer, deps: ToolDeps): void {
           views.length === 0
             ? `No ${args.status === 'all' ? '' : `${args.status} `}${args.crop ? `${cropName(args.crop)} ` : ''}crops recorded.`
             : `${plural(views.length, 'crop')}: ${views
-                .slice(0, 5)
-                .map((v) => `${v.crop} in ${v.field} sown ${v.sownDate} (${v.status}${v.harvestCount ? `, harvested ${v.harvestedDisplay}` : `, ${v.daysSinceSowing} days`})`)
+                .slice(0, 8)
+                .map(
+                  (v) =>
+                    `${v.crop} in ${v.field} sown ${v.sownDate} (${v.stage?.replace('_', ' ') ?? v.status}${v.harvestedGrams ? `, harvested ${v.harvestedDisplay}${v.figuresToDate ? ' so far' : ''}` : `, ${v.daysSinceSowing} days`}` +
+                    `${v.soldDisplay ? `, sold ${v.soldDisplay}` : ''}${v.revenueDisplay ? ` for ${v.revenueDisplay}` : ''}${v.retainedDisplay ? `, kept ${v.retainedDisplay}` : ''})`,
+                )
                 .join('; ')}.`;
         const structured = { crops: views, calculatedBy: 'server' as const };
         return { content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }], structuredContent: structured };

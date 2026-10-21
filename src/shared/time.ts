@@ -35,7 +35,7 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((toUtc(to).getTime() - toUtc(from).getTime()) / 86_400_000);
 }
 
-export const NAMED_PERIODS = ['today', 'yesterday', 'this_week', 'last_7_days', 'this_month', 'last_month'] as const;
+export const NAMED_PERIODS = ['today', 'yesterday', 'this_week', 'last_7_days', 'this_month', 'last_month', 'last_6_months'] as const;
 export type NamedPeriod = (typeof NAMED_PERIODS)[number];
 
 export interface DateRange {
@@ -67,6 +67,11 @@ export function resolveNamedPeriod(period: NamedPeriod, today: string): DateRang
       const firstOfThisMonth = `${today.slice(0, 7)}-01`;
       const lastOfPrevMonth = addDays(firstOfThisMonth, -1);
       return { from: `${lastOfPrevMonth.slice(0, 7)}-01`, to: lastOfPrevMonth };
+    }
+    case 'last_6_months': {
+      // This month and the five before it, from the 1st: on 2026-10-21 that is 2026-05-01 to 2026-10-21.
+      const [year, month] = today.split('-').map(Number) as [number, number];
+      return { from: new Date(Date.UTC(year, month - 6, 1)).toISOString().slice(0, 10), to: today };
     }
   }
 }

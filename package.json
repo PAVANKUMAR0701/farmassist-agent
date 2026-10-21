@@ -27,7 +27,8 @@
     "narration-eval": "tsx scripts/narration-eval.ts",
     "retrieval-eval": "tsx scripts/retrieval-eval.ts",
     "build-knowledge-index": "tsx scripts/build-knowledge-index.ts",
-    "demo-farm-reset": "tsx scripts/demo-farm-reset.ts"
+    "demo-farm-reset": "tsx scripts/demo-farm-reset.ts",
+    "seed-krishna-farm": "tsx scripts/seed-krishna-farm.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1151.0",
