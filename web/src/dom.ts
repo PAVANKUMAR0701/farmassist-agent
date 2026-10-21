@@ -93,6 +93,6 @@ export function icon(name: IconName): HTMLElement {
 export const badge = (text: string, tone: 'ok' | 'warn' | 'danger' | 'neutral' = 'neutral') => h('span', { class: `badge badge-${tone}` }, text);
 
 /** Screen title with an optional one-line description and actions on the right. */
-export function pageHeader(title: string, subtitle?: string, ...actions: Child[]): HTMLElement {
+export function pageHeader(title: string | Node, subtitle?: string, ...actions: Child[]): HTMLElement {
   return h('div', { class: 'page-head' }, h('div', {}, h('h2', {}, title), subtitle ? h('p', { class: 'muted small' }, subtitle) : null), h('div', { class: 'page-actions' }, ...actions));
 }

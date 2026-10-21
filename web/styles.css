@@ -975,3 +975,79 @@ body { background: var(--paper); color: var(--navy); font-family: 'Segoe UI Vari
   .app-narrow .content { background: linear-gradient(180deg, rgba(14, 18, 16, 0.82), rgba(14, 18, 16, 0.92)); }
   .page-head h2, .page-head p, .date-chip { text-shadow: none; }
 }
+
+/* =====================================================================================================
+   Reference v2 (2026-10-21): the photo shows across the whole window; dashboard panels are frosted
+   glass on top of it, the drawer floats lower down, and the mic is its own circle beside the input.
+   ===================================================================================================== */
+.app { background: var(--scenic) 50% 55% / cover no-repeat, #6c9a5b; }
+.app-wide .main-col { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-left: 0; }
+
+/* Drawer: lower on the page, leaves visible above it */
+.scenic { padding: 86px 18px 22px 20px; }
+.drawer { background: linear-gradient(180deg, rgba(10, 58, 38, 0.74), rgba(6, 44, 30, 0.82)); border-radius: 24px; }
+.drawer-head { padding: 16px 16px 10px; }
+.drawer-logo { box-shadow: none; background: transparent; width: 40px; height: 40px; }
+.drawer-logo .ico { width: 34px; height: 34px; color: var(--emerald); filter: drop-shadow(0 0 6px rgba(32, 200, 102, 0.45)); }
+.ask-card, .drawer .ask-card { margin: 2px 12px 8px; background: rgba(0, 0, 0, 0.18); border-color: rgba(255, 255, 255, 0.08); }
+.ask-head { justify-content: flex-start; }
+
+/* Composer: input box and a separate round mic */
+.composer { background: transparent; border: 0; box-shadow: none; padding: 0; gap: 10px; align-items: center; }
+.composer:focus-within { border: 0; }
+.input-box {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 14px; min-height: 54px;
+  border-radius: 14px; background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.input-box:focus-within { border-color: var(--mint); }
+.input-box input[type='text'] { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--on-ink); min-height: 44px; padding: 6px 2px; }
+.input-box input[type='text']::placeholder { color: rgba(238, 246, 240, 0.6); }
+.input-box input[type='text']:focus-visible { outline: none; }
+.composer .talk { width: 54px; height: 54px; flex: none; }
+.composer .talk .ico { width: 24px; height: 24px; }
+
+/* Main area directly on the photo */
+.app-wide .topbar { padding: 22px 28px 4px; }
+.topnav { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-color: rgba(255, 255, 255, 0.7); box-shadow: 0 8px 30px -12px rgba(0, 0, 0, 0.35); }
+.account-menu summary { color: #13213a; }
+.account-menu .avatar { background: rgba(227, 244, 232, 0.95); }
+.page-head h2, .page-head p, .date-chip, .account-name { text-shadow: 0 1px 8px rgba(255, 255, 255, 0.85), 0 0 2px rgba(255, 255, 255, 0.9); }
+.page-head h2 { color: #0f1b2e; }
+.page-head p, .date-chip { color: #24324a; }
+.greeting { display: inline-flex; align-items: center; gap: 8px; }
+.greeting-leaf { display: inline-flex; color: var(--emerald); }
+.greeting-leaf .ico { width: 24px; height: 24px; }
+.btn-outline { background: rgba(255, 255, 255, 0.92); border-color: rgba(255, 255, 255, 0.8); box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.35); }
+
+/* Frosted glass panels and tiles */
+.card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px) saturate(1.25); -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 18px 40px -18px rgba(0, 0, 0, 0.35);
+}
+.stat {
+  backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 16px 36px -18px rgba(0, 0, 0, 0.35);
+}
+.stat-accent-green { background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(236, 248, 239, 0.86)); }
+.stat-accent-blue { background: linear-gradient(160deg, rgba(234, 243, 255, 0.92), rgba(255, 255, 255, 0.84)); }
+.stat-accent-amber { background: linear-gradient(160deg, rgba(255, 243, 230, 0.92), rgba(255, 255, 255, 0.84)); }
+.stat-accent-mint { background: linear-gradient(160deg, rgba(236, 248, 238, 0.92), rgba(255, 255, 255, 0.84)); }
+.stat-accent-rose { background: linear-gradient(160deg, rgba(255, 236, 236, 0.94), rgba(255, 244, 244, 0.86)); }
+.icon-rows li, .row { border-top-color: rgba(19, 33, 58, 0.08); }
+.verified-strip { background: rgba(225, 244, 230, 0.9); }
+.dev-banner { background: rgba(255, 243, 205, 0.92); }
+
+@media (prefers-color-scheme: dark) {
+  .card { background: rgba(20, 26, 22, 0.78); border-color: rgba(255, 255, 255, 0.08); }
+  .stat-accent-green, .stat-accent-blue, .stat-accent-amber, .stat-accent-mint, .stat-accent-rose { background: rgba(22, 28, 24, 0.8); border-color: rgba(255, 255, 255, 0.08); }
+  .topnav { background: rgba(20, 26, 22, 0.86); border-color: rgba(255, 255, 255, 0.1); }
+  .btn-outline { background: rgba(20, 26, 22, 0.86); border-color: rgba(255, 255, 255, 0.1); }
+  .page-head h2 { color: #fff; }
+  .page-head p, .date-chip, .account-menu summary { color: #e8ece8; }
+  .page-head h2, .page-head p, .date-chip, .account-name { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7); }
+}
+@media (min-width: 1180px) { .stats { grid-template-columns: repeat(5, minmax(0, 1fr)); } }

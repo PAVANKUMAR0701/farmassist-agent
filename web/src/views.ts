@@ -63,7 +63,7 @@ const SUGGESTIONS: Array<{ text: string; send: boolean; icon: IconName; more?: b
 
 /** The ALEXA+ wordmark (text with a curved underline), shown as supporting integration branding. */
 function alexaMark(): HTMLElement {
-  const mark = h('span', { class: 'alexa-mark', role: 'img', 'aria-label': 'Alexa+' });
+  const mark = h('span', { class: 'alexa-mark', role: 'img', 'aria-label': 'Alexa+', title: 'Alexa-style voice simulator for this demo, not an Amazon device' });
   mark.innerHTML =
     '<svg viewBox="0 0 120 34" aria-hidden="true"><text x="60" y="20" text-anchor="middle" font-size="19" font-weight="800" letter-spacing="2" fill="currentColor">ALEXA+</text>' +
     '<path d="M28 25 Q60 34 92 25" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
@@ -295,11 +295,10 @@ export function chatView(): HTMLElement {
   /** The round mic beside Send: talk now, no wake word needed. Red with a stop square while listening. */
   const talk = h('button', { type: 'button', class: 'talk', 'data-state': 'off' }, icon('mic'));
   const waves = (side: string) => h('span', { class: `orb-waves orb-waves-${side}`, 'aria-hidden': 'true' }, icon('waves'));
-  const newChatButton = h('button', { class: 'ask-new', type: 'button', title: 'Start a new chat' }, icon('plus'), 'New chat');
   const simBox = h(
     'div',
     { class: 'sim ask-card' },
-    h('div', { class: 'ask-head' }, h('p', { class: 'ask-title' }, 'Ask FarmAssist'), newChatButton),
+    h('div', { class: 'ask-head' }, h('p', { class: 'ask-title' }, 'Ask FarmAssist')),
     h('p', { class: 'ask-desc' }, 'Get insights about your farm, expenses, animals, crops and more.'),
     h('div', { class: 'orb-wrap' }, waves('left'), orb, waves('right')),
     h('div', { class: 'sim-text' }, h('p', { class: 'sim-kicker' }, 'Alexa-style simulator'), status, hint),
@@ -481,7 +480,6 @@ export function chatView(): HTMLElement {
     }
   });
 
-  newChatButton.addEventListener('click', newChat);
   // The round button on the right is always the microphone. Typed text is sent with Enter, or with the small
   // arrow that appears inside the box only while there is text.
   const showSend = (): void => void form.classList.toggle('has-text', input.value.trim().length > 0);
@@ -490,10 +488,8 @@ export function chatView(): HTMLElement {
   const form: HTMLFormElement = h(
     'form',
     { class: 'composer', onsubmit: (e: Event) => (e.preventDefault(), sim.cancelCommand(), void submit(input.value), showSend()) },
-    keyboard,
+    h('span', { class: 'input-box' }, keyboard, input, send),
     photoInput,
-    input,
-    send,
     voiceInput ? talk : null,
   );
   // Settings: hands-free, photo help and a new chat, out of the way of the main controls.
@@ -521,7 +517,7 @@ export function chatView(): HTMLElement {
       { class: 'composer-wrap' },
       form,
       h('div', { class: 'sim-controls' }, voiceOutput ? speaker : null, voiceInput || voiceOutput ? languageBox : null, settings),
-      h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.'),
+      h('p', { class: 'composer-hint sr-only' }, 'A voice simulator for this demo, not an Amazon device.'),
       voiceDebug ? voiceDebugPanel() : null,
     ),
   );
@@ -748,7 +744,7 @@ export function todayView(): HTMLElement {
   return h(
     'section',
     { class: 'view' },
-    pageHeader(greeting(), "Here's your farm at a glance.", h('span', { class: 'date-chip' }, icon('calendar'), longToday()), refresh),
+    pageHeader(h('span', { class: 'greeting' }, greeting(), h('span', { class: 'greeting-leaf' }, icon('leaf'))), "Here's your farm at a glance.", h('span', { class: 'date-chip' }, icon('calendar'), longToday()), refresh),
     tiles,
     h(
       'div',
