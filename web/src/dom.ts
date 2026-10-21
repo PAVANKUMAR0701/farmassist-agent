@@ -56,7 +56,8 @@ const ICONS = {
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4Z"/><path d="M10 21h4"/>',
   milk: '<path d="M9 3h6v3l2 4v11H7V10l2-4Z"/><path d="M7 13h10"/>',
   sprout: '<path d="M12 20v-8"/><path d="M12 12c-4 0-6-2-6-6 4 0 6 2 6 6Z"/><path d="M12 14c0-3 2-5 6-5 0 3-2 5-6 5Z"/>',
-  cow: '<path d="M6 8c-2 0-3-1-3-3 2 0 3 1 3 3Z"/><path d="M18 8c2 0 3-1 3-3-2 0-3 1-3 3Z"/><path d="M6 8h12v6a6 6 0 0 1-12 0Z"/><circle cx="10" cy="15" r=".6"/><circle cx="14" cy="15" r=".6"/>',
+  // Cow head: horns, side ears, long face and a wide muzzle (the earlier round face with a snout read as a pig).
+  cow: '<path d="M8 5.5C6.5 5.5 5.5 4.3 5.5 3"/><path d="M16 5.5c1.5 0 2.5-1.2 2.5-2.5"/><path d="M7.5 8h-4c.6 1.5 2 2.2 4 2"/><path d="M16.5 8h4c-.6 1.5-2 2.2-4 2"/><path d="M7.5 13.5V6.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7"/><rect x="6.5" y="13.5" width="11" height="7" rx="3.5"/><circle cx="10" cy="9.5" r=".5"/><circle cx="14" cy="9.5" r=".5"/><circle cx="10" cy="17" r=".5"/><circle cx="14" cy="17" r=".5"/>',
   volume: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/>',
   mute: '<path d="M4 9v6h4l5 4V5L8 9Z"/><path d="m17 10 4 4M21 10l-4 4"/>',
   micoff: '<path d="M3 3l18 18"/><path d="M9 9v2a3 3 0 0 0 5 2.2M15 10V6a3 3 0 0 0-5.7-1.3"/><path d="M5 11a7 7 0 0 0 11.5 5.4M19 11a7 7 0 0 1-.6 2.8"/><path d="M12 18v3"/>',
