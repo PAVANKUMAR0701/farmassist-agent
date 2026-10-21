@@ -478,4 +478,50 @@ describe('VoiceSimulator', () => {
       expect(deps.speak).not.toHaveBeenCalled();
     });
   });
+
+  // ---- Seen in a real Edge voice log, 2026-10-21: "So." was sent on its own at a natural pause
+
+  describe('pauses inside a sentence', () => {
+    it('"So." alone is not sent; the rest of the sentence joins it', async () => {
+      const { sim, mic, deps } = setup(undefined, true, false);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('So.');
+      await vi.advanceTimersByTimeAsync(2500); // a natural pause, longer than the silence window
+      expect(deps.submit).not.toHaveBeenCalled();
+      mic().hear('So. what is the total production of the milk today?');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(deps.submit).toHaveBeenCalledExactlyOnceWith('So. what is the total production of the milk today?');
+    });
+
+    it('filler alone, then nothing: the mic turns off without sending anything', async () => {
+      const { sim, mic, deps } = setup(undefined, true, false);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('okay');
+      await vi.advanceTimersByTimeAsync(1000 + 5000 + 100);
+      expect(deps.submit).not.toHaveBeenCalled();
+      expect(sim.state).toBe('off');
+    });
+
+    it('a short request gets one extra pause, then is sent once', async () => {
+      const { sim, mic, deps } = setup(undefined, true, false);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('show crops');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(deps.submit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(deps.submit).toHaveBeenCalledExactlyOnceWith('show crops');
+    });
+
+    it('"okay, thank you" is a real message and is sent', async () => {
+      const { sim, mic, deps } = setup(undefined, true, false);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('Okay, thank you.');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(deps.submit).toHaveBeenCalledExactlyOnceWith('Okay, thank you.');
+    });
+  });
 });

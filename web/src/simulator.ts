@@ -78,6 +78,17 @@ const SHORT_ANSWER_WORDS = 3;
  * stopped voice before anything was sent.
  */
 const RESTART_DELAY_MS = 250;
+/**
+ * Words that start a sentence but are not a request on their own. Seen in a real Edge log (2026-10-21):
+ * "So." was finalised at a natural pause and sent, and the farmer had to say the whole question again.
+ */
+const FILLERS = new Set(['so', 'okay', 'ok', 'um', 'uh', 'umm', 'hmm', 'and', 'well', 'then', 'also', 'actually', 'acha', 'accha', 'haan', 'ji']);
+const isFillerOnly = (command: string) => {
+  const words = command.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => FILLERS.has(w));
+};
+/** A request this short gets one extra pause before it is sent (the farmer may still be thinking). */
+const SHORT_COMMAND_WORDS = 2;
 
 export class VoiceSimulator {
   state: SimState = 'off';
@@ -426,7 +437,10 @@ export class VoiceSimulator {
   private armCommandTimeout(): void {
     clearTimeout(this.commandTimer);
     this.commandTimer = setTimeout(() => {
-      if (this.state !== 'listening' || this.commandOf(this.heardText())) return;
+      if (this.state !== 'listening') return;
+      const heard = this.commandOf(this.heardText());
+      // Something real was said and is being handled. A held filler ("So.") alone does not keep the mic on.
+      if (heard && !(isFillerOnly(heard) && !this.confirming)) return;
       // No follow-up: the conversation is simply over; turn the mic off without a message.
       if (this.followUp) return this.idle();
       this.deps.onNotice(this.confirming ? 'I did not hear yes or no, so nothing was saved yet. Tap Yes or No, or say "Alexa, yes".' : "I didn't hear a question. Say \"Alexa\" and try again, or type below.");
@@ -448,6 +462,19 @@ export class VoiceSimulator {
       this.idle();
       if (heard) this.deps.onIncomplete(heard);
       return;
+    }
+    // Answers to a read-back ("ok", "haan", "yes") are handled as answers, never held back.
+    if (!this.confirming) {
+      if (isFillerOnly(command)) {
+        // "So." alone is the start of a sentence: keep listening; the next words join it.
+        this.trace('hold:filler', command);
+        this.waitStarted = true;
+        return this.armCommandTimeout();
+      }
+      if (command.split(/\s+/).length <= SHORT_COMMAND_WORDS && this.extensions < MAX_EXTENSIONS) {
+        this.extensions = MAX_EXTENSIONS; // one extra pause, not more
+        return this.armSilence();
+      }
     }
     void this.finish(command);
   }
