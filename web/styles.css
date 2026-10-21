@@ -481,3 +481,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .switch { margin: 16px 0 0; font-size: 0.92rem; color: var(--muted); }
 .switch button.link { font-size: 0.92rem; padding: 0 2px; min-height: 32px; }
 .code-input { font-size: 1.5rem; letter-spacing: 0.4em; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Voice log (?voicedebug=1) */
+.voice-debug { margin-top: 8px; display: grid; gap: 6px; }
+.voice-log { margin: 0; max-height: 150px; overflow: auto; padding: 8px; border-radius: 8px; background: var(--ink-2); color: var(--on-ink-muted); font: 0.72rem/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; }

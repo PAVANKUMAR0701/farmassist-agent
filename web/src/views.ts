@@ -77,11 +77,43 @@ export const DESKTOP_QUERY = '(min-width: 1024px)';
 let stopVoice: (() => void) | undefined;
 export const pauseVoice = () => stopVoice?.();
 
-/** A short two-note tone after the wake word. Web Audio, so no file to load; silent where unsupported. */
+/**
+ * Voice event log for diagnosing a real phone: on only with ?voicedebug=1 (remembered on this device),
+ * kept in memory, shown in the assistant panel with a Copy button. Never sent anywhere.
+ */
+const VOICE_DEBUG_KEY = 'farmassist.voiceDebug';
+const voiceDebug = (() => {
+  try {
+    const param = new URLSearchParams(location.search).get('voicedebug');
+    if (param === '1') localStorage.setItem(VOICE_DEBUG_KEY, '1');
+    if (param === '0') localStorage.removeItem(VOICE_DEBUG_KEY);
+    return localStorage.getItem(VOICE_DEBUG_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+const voiceLog: string[] = [];
+let voiceLogView: HTMLElement | undefined;
+const started = Date.now();
+function trace(event: string, detail?: string): void {
+  if (!voiceDebug) return;
+  const line = `${((Date.now() - started) / 1000).toFixed(1).padStart(7)}s  ${event}${detail ? `  ${detail}` : ''}`;
+  voiceLog.push(line);
+  if (voiceLog.length > 400) voiceLog.shift();
+  if (voiceLogView) voiceLogView.textContent = voiceLog.slice(-12).join('\n');
+}
+
+/** A short two-note tone ("your turn"). Web Audio, so no file to load; silent where unsupported. */
 let audio: AudioContext | undefined;
+let audioIdle: ReturnType<typeof setTimeout> | undefined;
 function chime(): void {
   try {
     audio ??= new AudioContext();
+    trace('chime');
+    void audio.resume();
+    // Let go of the audio output again after the tone: an idle open output can click on some phones.
+    clearTimeout(audioIdle);
+    audioIdle = setTimeout(() => void audio?.suspend(), 600);
     const now = audio.currentTime;
     [660, 880].forEach((freq, i) => {
       const osc = audio!.createOscillator();
@@ -138,6 +170,20 @@ function toolCallList(actions: ChatReply['actions']): HTMLElement {
       ),
     ),
   );
+}
+
+function voiceDebugPanel(): HTMLElement {
+  voiceLogView = h('pre', { class: 'voice-log', 'aria-label': 'Voice log' }, voiceLog.slice(-12).join('\n'));
+  const copy = h('button', { type: 'button', class: 'sim-toggle' }, 'Copy voice log');
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(voiceLog.join('\n'));
+      copy.textContent = 'Copied';
+    } catch {
+      copy.textContent = 'Copy failed: select the text instead';
+    }
+  });
+  return h('div', { class: 'voice-debug' }, h('p', { class: 'try-title' }, 'Voice log (debug)'), voiceLogView, copy);
 }
 
 export function chatView(): HTMLElement {
@@ -245,7 +291,14 @@ export function chatView(): HTMLElement {
     orb.title = text.orb;
     orb.disabled = state === 'processing';
     // While listening, the words heard replace the status, as on a voice assistant's screen.
-    status.textContent = view.transcript ? `“${view.transcript}”` : state === 'listening' && view.confirming ? 'Listening for yes or no…' : text.status;
+    // "One moment" until the phone's mic is really capturing: words said before that are lost.
+    status.textContent = view.transcript
+      ? `“${view.transcript}”`
+      : state === 'listening' && view.starting
+        ? 'One moment…'
+        : state === 'listening' && view.confirming
+          ? 'Listening for yes or no…'
+          : text.status;
     status.classList.toggle('heard', Boolean(view.transcript));
     hint.textContent = view.message ?? (state === 'listening' && view.confirming && !view.transcript ? 'Say "yes" to save it, or "no" to cancel.' : '');
     hint.classList.toggle('err', Boolean(view.message));
@@ -261,7 +314,7 @@ export function chatView(): HTMLElement {
     lang: () => prefs.lang,
     submit: (command) => submit(command, true),
     speakEnabled: () => voiceOutput && prefs.speakReplies,
-    speak: (text) => speak(text, prefs.lang),
+    speak: (text) => (trace('tts', `${text.length} chars`), speak(text, prefs.lang)),
     stopSpeaking,
     chime,
     onChange: render,
@@ -271,6 +324,7 @@ export function chatView(): HTMLElement {
     },
     onNotice: (text) => bubble('bot', notice('info', text)),
     handsFree: () => handsFree,
+    trace,
   });
   stopVoice = () => sim.isActive && sim.stop();
   orb.addEventListener('click', () => sim.talk());
@@ -411,6 +465,7 @@ export function chatView(): HTMLElement {
       form,
       h('div', { class: 'sim-controls' }, voiceOutput ? speaker : null, voiceInput || voiceOutput ? language : null, voiceInput ? handsFreeButton : null),
       h('p', { class: 'composer-hint' }, 'A voice simulator for this demo, not an Amazon device.'),
+      voiceDebug ? voiceDebugPanel() : null,
     ),
   );
 }

@@ -19,6 +19,8 @@ export interface SimView {
   message?: string;
   /** Listening for a yes/no answer to a read-back, so no wake word is needed. */
   confirming?: boolean;
+  /** Listening, but the microphone is not capturing yet: words said now would be lost. */
+  starting?: boolean;
 }
 
 export interface SimReply {
@@ -40,6 +42,8 @@ export interface SimDeps {
   /** The words heard never became final: put them in the text box for the farmer to check and send. */
   onIncomplete(text: string): void;
   onNotice(text: string): void;
+  /** Optional event log for diagnosing voice problems on a real device (never sent anywhere). */
+  trace?(event: string, detail?: string): void;
   /** Hands-free: after each reply, keep the mic on and wait for "Alexa". Off: the mic turns off after each reply. */
   handsFree?(): boolean;
 }
@@ -60,6 +64,10 @@ const MAX_RESTARTS = 8;
 const RESTART_WINDOW_MS = 20_000;
 /** Extra silence periods to wait for an interim phrase to become final before giving it to the farmer to check. */
 const MAX_EXTENSIONS = 2;
+/** If a browser never reports that audio capture started, treat the mic as live after this long. */
+const AUDIO_START_FALLBACK_MS = 1500;
+/** A reply to a read-back question this short is sent as soon as it is final (no silence wait). */
+const SHORT_ANSWER_WORDS = 3;
 
 export class VoiceSimulator {
   state: SimState = 'off';
@@ -79,6 +87,18 @@ export class VoiceSimulator {
   private commandTimer: ReturnType<typeof setTimeout> | undefined;
   private restarts: number[] = [];
   private lastSpoken = '';
+  /** Results of the current recogniser already set aside (talk not meant for the assistant). */
+  private skipResults = 0;
+  /** True once the current recogniser is really capturing audio. */
+  private micLive = false;
+  /** The "your turn" tone has played for this listening phase (once only, not on every mic restart). */
+  private cued = false;
+  /** The wait for a command has started for this listening phase (once, when the mic first goes live). */
+  private waitStarted = false;
+  private audioStartTimer: ReturnType<typeof setTimeout> | undefined;
+  private trace(event: string, detail?: string): void {
+    this.deps.trace?.(event, detail);
+  }
 
   constructor(
     private readonly deps: SimDeps,
@@ -173,8 +193,9 @@ export class VoiceSimulator {
   // ---------------------------------------------------------------- states
 
   private set(state: SimState, view: SimView = {}): void {
+    if (state !== this.state) this.trace(`state:${state}`);
     this.state = state;
-    this.deps.onChange(state, view);
+    this.deps.onChange(state, state === 'listening' ? { ...view, starting: !this.micLive } : view);
   }
 
   private toReady(): void {
@@ -195,9 +216,35 @@ export class VoiceSimulator {
     this.clearTimers();
     this.resetUtterance();
     this.confirming = confirming;
+    this.cued = false;
+    this.waitStarted = false;
+    this.openMic(); // before set(): the screen says "One moment" until the mic is really capturing
     this.set('listening', { confirming });
-    this.openMic();
     this.armCommandTimeout();
+  }
+
+  /**
+   * The microphone is really capturing now. Until this moment a phone may still be starting it, and words
+   * said then are lost (reproduced: "yes" said right after the read-back was never heard).
+   */
+  private onAudioStart(): void {
+    clearTimeout(this.audioStartTimer);
+    if (this.micLive) return;
+    this.micLive = true;
+    this.trace('mic:live');
+    if (this.state !== 'listening') return;
+    // The "your turn" tone, then the screen switches from "One moment" to "Listening…".
+    if (!this.cued && (this.confirming || !this.heardText())) {
+      this.cued = true;
+      this.deps.chime();
+    }
+    this.deps.onChange('listening', { confirming: this.confirming, starting: false, transcript: this.commandOf(this.heardText()) || undefined });
+    // The wait for an answer starts when the farmer can first be heard. Only once: phones restart the mic
+    // every few quiet seconds, and re-arming here kept an unanswered mic open forever (caught in testing).
+    if (!this.waitStarted) {
+      this.waitStarted = true;
+      this.armCommandTimeout();
+    }
   }
 
   private fail(code: string): void {
@@ -216,27 +263,36 @@ export class VoiceSimulator {
     const rec = this.deps.createRecognition();
     if (!rec) return this.fail('service-not-allowed');
     const generation = ++this.generation;
+    this.skipResults = 0;
+    this.micLive = false;
     rec.lang = this.deps.lang();
     rec.continuous = true; // keep listening through pauses; we decide when a command is finished
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-    rec.onresult = (event) => generation === this.generation && this.onResult(readResults(event));
+    rec.onresult = (event) => generation === this.generation && this.onResult(readResults(event, this.skipResults));
     rec.onerror = (event) => generation === this.generation && this.onError(event.error);
     rec.onend = () => generation === this.generation && this.onEnd();
+    rec.onaudiostart = () => generation === this.generation && this.onAudioStart();
     this.rec = rec;
     try {
       rec.start();
+      this.trace('rec:start', rec.lang);
     } catch {
-      this.fail('start-failed');
+      return this.fail('start-failed');
     }
+    clearTimeout(this.audioStartTimer);
+    this.audioStartTimer = setTimeout(() => generation === this.generation && this.onAudioStart(), AUDIO_START_FALLBACK_MS);
   }
 
   private closeMic(): void {
     this.generation++;
     const rec = this.rec;
     this.rec = undefined;
+    this.micLive = false;
+    clearTimeout(this.audioStartTimer);
     if (!rec) return;
-    rec.onresult = rec.onerror = rec.onend = null;
+    this.trace('rec:abort');
+    rec.onresult = rec.onerror = rec.onend = rec.onaudiostart = null;
     try {
       rec.abort();
     } catch {
@@ -247,19 +303,24 @@ export class VoiceSimulator {
   /** The browser ended recognition (its own time limit, or Android after every phrase). Carry on listening. */
   private onEnd(): void {
     this.rec = undefined;
+    this.micLive = false;
+    this.trace('rec:end');
     if (!this.active || (this.state !== 'ready' && this.state !== 'listening')) return;
     const now = Date.now();
     this.restarts = this.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
     this.restarts.push(now);
     if (this.restarts.length > MAX_RESTARTS) return this.fail('restart-loop');
-    // Keep what was already final: the farmer may still be in the middle of the sentence.
-    this.carried = joinSegments([this.carried, this.sessionFinal]);
+    // Keep what was heard: the farmer may still be in the middle of the sentence. Words still marked interim
+    // count too: this session is over, so the browser will never revise them (reproduced: a short "yes" that
+    // was only ever interim was dropped here and the answer was lost).
+    this.carried = joinSegments([this.carried, this.sessionFinal, this.interim]);
     this.sessionFinal = '';
     this.interim = '';
     this.openMic();
   }
 
   private onError(code: string): void {
+    this.trace('rec:error', code);
     // "no-speech" and "aborted" are normal while waiting; onend follows and the mic reopens.
     if (code === 'no-speech' || code === 'aborted') return;
     this.fail(code);
@@ -281,18 +342,25 @@ export class VoiceSimulator {
     return wake || this.state === 'listening' ? command : '';
   }
 
-  private onResult(result: { final: string; interim: string }): void {
+  private onResult(result: { final: string; interim: string; count: number }): void {
     this.sessionFinal = result.final;
     this.interim = result.interim;
     const heard = this.heardText();
+    this.trace(result.interim ? 'heard:interim' : 'heard:final', heard);
 
     if (this.state === 'ready') {
       if (!extractCommand(heard).wake) {
-        // Talk that was not meant for the assistant: once it is final, start afresh so it never piles up.
-        if (result.final && !result.interim) this.restartFresh();
+        // Talk that was not meant for the assistant: once it is final, set it aside. The recogniser is not
+        // restarted for this: on phones every restart can make the browser's own "listening" sound.
+        if (result.final && !result.interim) {
+          this.skipResults = result.count;
+          this.resetUtterance();
+        }
         return;
       }
       this.deps.chime();
+      this.cued = true;
+      this.waitStarted = true;
       this.confirming = false;
       this.set('listening', {});
       this.armCommandTimeout();
@@ -300,17 +368,19 @@ export class VoiceSimulator {
     if (this.state !== 'listening') return;
 
     const command = this.commandOf(heard);
-    this.deps.onChange('listening', { transcript: command, confirming: this.confirming });
+    this.deps.onChange('listening', { transcript: command, confirming: this.confirming, starting: !this.micLive });
     if (command) {
       clearTimeout(this.commandTimer);
       this.extensions = 0;
+      // A short, final answer to a read-back ("yes", "no", "haan") is sent at once.
+      const finalCommand = this.commandOf(this.finalText());
+      if (this.confirming && !this.interim && finalCommand && finalCommand.split(/\s+/).length <= SHORT_ANSWER_WORDS) {
+        clearTimeout(this.silenceTimer);
+        void this.finish(finalCommand);
+        return;
+      }
       this.armSilence();
     }
-  }
-
-  private restartFresh(): void {
-    this.resetUtterance();
-    this.openMic();
   }
 
   private armSilence(): void {
@@ -352,6 +422,7 @@ export class VoiceSimulator {
     this.closeMic();
     this.resetUtterance();
     try {
+      this.trace('send', command);
       if (isEcho(command, this.lastSpoken)) {
         // The speaker came back through the mic (heard live, 2026-10-16). Never send that as the farmer's words.
         this.deps.onNotice('That sounded like my own voice, so I ignored it. Say "Alexa" and speak again.');
@@ -374,7 +445,9 @@ export class VoiceSimulator {
   private async speakReply(text: string): Promise<void> {
     this.set('speaking', {});
     this.lastSpoken = text;
+    this.trace('speak:start');
     await this.deps.speak(text);
+    this.trace('speak:end');
     await new Promise((resolve) => setTimeout(resolve, this.opts.resumeDelayMs));
   }
 
@@ -388,5 +461,6 @@ export class VoiceSimulator {
   private clearTimers(): void {
     clearTimeout(this.silenceTimer);
     clearTimeout(this.commandTimer);
+    clearTimeout(this.audioStartTimer);
   }
 }

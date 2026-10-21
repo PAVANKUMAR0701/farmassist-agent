@@ -23,6 +23,8 @@ export interface Recognition {
   onresult: ((event: RecognitionResultEvent) => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
+  /** Fired when the microphone really starts capturing (not every browser sends it). */
+  onaudiostart?: (() => void) | null;
   start(): void;
   stop(): void;
   abort(): void;
@@ -86,15 +88,18 @@ export function joinSegments(segments: string[]): string {
   return text;
 }
 
-/** Final and still-changing (interim) text of one recognition session, rebuilt from all its results. */
-export function readResults(event: RecognitionResultEvent): { final: string; interim: string } {
+/**
+ * Final and still-changing (interim) text of one recognition session, rebuilt from all its results.
+ * Results before `from` are skipped (talk already set aside, e.g. not addressed to the assistant).
+ */
+export function readResults(event: RecognitionResultEvent, from = 0): { final: string; interim: string; count: number } {
   const finals: string[] = [];
   const interims: string[] = [];
-  for (let i = 0; i < event.results.length; i++) {
+  for (let i = from; i < event.results.length; i++) {
     const r = event.results[i]!;
     (r.isFinal ? finals : interims).push(r[0].transcript);
   }
-  return { final: joinSegments(finals), interim: joinSegments(interims) };
+  return { final: joinSegments(finals), interim: joinSegments(interims), count: event.results.length };
 }
 
 /** Spellings recognisers produce for the wake word, in English, Hindi and Tamil. */

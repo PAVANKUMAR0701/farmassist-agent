@@ -11,7 +11,12 @@ class FakeRecognition implements Recognition {
   onresult: ((event: RecognitionResultEvent) => void) | null = null;
   onerror: ((event: { error: string }) => void) | null = null;
   onend: (() => void) | null = null;
+  onaudiostart: (() => void) | null = null;
   running = false;
+  /** The phone's microphone is really capturing now. */
+  audioStart() {
+    this.onaudiostart?.();
+  }
   private results: Array<{ isFinal: boolean; 0: { transcript: string } }> = [];
   start() {
     this.running = true;
@@ -288,5 +293,130 @@ describe('VoiceSimulator', () => {
     expect(sim.state).toBe('ready');
     sim.handsFreeChanged(false);
     expect(sim.state).toBe('off');
+  });
+
+  // ---- Bug 1: the answer to a read-back question was not heard (reproduced in the browser lab, 2026-10-20)
+
+  describe('answers to a read-back question', () => {
+    const READ_BACK = { reply: 'Shall I record ₹500.00 on feed for today? Say yes to save it, or no to cancel.', awaitingConfirmation: true };
+
+    async function toQuestion(handsFree = false) {
+      const ctx = setup(READ_BACK, true, handsFree);
+      ctx.sim.talk();
+      ctx.mic().audioStart();
+      ctx.mic().hear('spent 500 on cattle feed');
+      await vi.advanceTimersByTimeAsync(1000 + 100); // silence, reply spoken, resume delay
+      expect(ctx.sim.state).toBe('listening');
+      return ctx;
+    }
+
+    it('says "One moment" until the phone mic is really capturing, then plays the your-turn tone', async () => {
+      const { mic, views, deps } = await toQuestion();
+      deps.chime.mockClear();
+      expect(views.at(-1)).toMatchObject({ state: 'listening', starting: true });
+      mic().audioStart();
+      expect(views.at(-1)).toMatchObject({ state: 'listening', starting: false, confirming: true });
+      expect(deps.chime).toHaveBeenCalledOnce();
+    });
+
+    it('the your-turn tone plays once per question, not again when the phone restarts the mic', async () => {
+      const { mic, deps } = await toQuestion();
+      deps.chime.mockClear();
+      mic().audioStart();
+      mic().end(); // the phone ends the session; the simulator reopens the mic
+      mic().audioStart();
+      expect(deps.chime).toHaveBeenCalledOnce();
+    });
+
+    it('a browser that never reports audio start still gets "Listening" after a short fallback', async () => {
+      const { views } = await toQuestion();
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(views.at(-1)).toMatchObject({ state: 'listening', starting: false });
+    });
+
+    for (const answer of ['yes', 'no', 'haan']) {
+      it(`a final "${answer}" is sent at once, exactly once, without the wake word`, async () => {
+        const { mic, deps } = await toQuestion();
+        mic().audioStart();
+        mic().hear(answer);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(deps.submit).toHaveBeenNthCalledWith(2, answer);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(deps.submit).toHaveBeenCalledTimes(2);
+      });
+    }
+
+    it('keeps a short answer that was still interim when the phone ended the session', async () => {
+      const { mic, deps } = await toQuestion();
+      mic().audioStart();
+      mic().hear('yes', false); // never becomes final
+      mic().end(); // the browser ends the session; the simulator reopens the mic
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(deps.submit).toHaveBeenNthCalledWith(2, 'yes');
+      expect(deps.submit).toHaveBeenCalledTimes(2);
+    });
+
+    it('a long answer still waits for the pause (it may be a new request, not yes/no)', async () => {
+      const { mic, deps } = await toQuestion();
+      mic().audioStart();
+      mic().hear('no it was 250 rupees');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(deps.submit).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(deps.submit).toHaveBeenNthCalledWith(2, 'no it was 250 rupees');
+    });
+  });
+
+  // ---- Bug 2: an unexpected sound every 1-3 minutes while idle
+
+  describe('while idle', () => {
+    it('hands-free on: in 5 minutes the app itself makes no sound; the recogniser restarts only when the browser ends it', async () => {
+      const { sim, deps, recognisers, mic } = setup();
+      sim.handsFreeChanged(true);
+      let browserEnds = 0;
+      for (let second = 0; second < 300; second++) {
+        if (second % 45 === 10) mic().hear('the calf needs water'); // talk in the room, not for the assistant
+        if (second % 7 === 6) {
+          mic().error('no-speech'); // what a phone does after a few quiet seconds
+          browserEnds++;
+        }
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      expect(deps.speak).not.toHaveBeenCalled();
+      expect(deps.chime).not.toHaveBeenCalled();
+      expect(deps.submit).not.toHaveBeenCalled();
+      // One recogniser to start with, plus one per browser-ended session; none for the room talk.
+      expect(recognisers.length).toBe(1 + browserEnds);
+      expect(recognisers.filter((r) => r.running)).toHaveLength(1);
+      expect(sim.state).toBe('ready');
+    });
+
+    it('hands-free off: an unanswered tap gives up even when the phone keeps restarting the mic (regression)', async () => {
+      const { sim, recognisers, mic } = setup(undefined, true, false);
+      sim.talk();
+      for (let second = 0; second < 60 && sim.state !== 'off'; second++) {
+        // A phone that ends a quiet session every 3 s (faster than the 5 s wait): the mic reopens and goes live again.
+        if (second % 3 === 0) mic()?.audioStart();
+        if (second % 3 === 2) mic()?.error('no-speech');
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      expect(sim.state).toBe('off');
+      const count = recognisers.length;
+      expect(count).toBeLessThanOrEqual(4);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(recognisers.length).toBe(count);
+    });
+
+    it('hands-free off: after a tap that hears nothing, the mic is closed and stays closed', async () => {
+      const { sim, deps, recognisers } = setup(undefined, true, false);
+      sim.talk();
+      await vi.advanceTimersByTimeAsync(1500 + 5000 + 100); // mic-live fallback, then the command timeout
+      expect(sim.state).toBe('off');
+      const count = recognisers.length;
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(recognisers.length).toBe(count);
+      expect(recognisers.filter((r) => r.running)).toHaveLength(0);
+      expect(deps.speak).not.toHaveBeenCalled();
+    });
   });
 });
