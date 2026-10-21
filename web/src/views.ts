@@ -298,7 +298,9 @@ export function chatView(): HTMLElement {
         ? 'One moment…'
         : state === 'listening' && view.confirming
           ? 'Listening for yes or no…'
-          : text.status;
+          : state === 'listening' && view.followUp
+            ? "Anything else? I'm listening…"
+            : text.status;
     status.classList.toggle('heard', Boolean(view.transcript));
     hint.textContent = view.message ?? (state === 'listening' && view.confirming && !view.transcript ? 'Say "yes" to save it, or "no" to cancel.' : '');
     hint.classList.toggle('err', Boolean(view.message));

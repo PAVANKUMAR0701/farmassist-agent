@@ -21,6 +21,8 @@ export interface SimView {
   confirming?: boolean;
   /** Listening, but the microphone is not capturing yet: words said now would be lost. */
   starting?: boolean;
+  /** Listening briefly for a follow-up after an answer (hands-free off); the mic turns off if nothing is said. */
+  followUp?: boolean;
 }
 
 export interface SimReply {
@@ -55,9 +57,11 @@ export interface SimOptions {
   commandTimeoutMs: number;
   /** Pause between the end of a spoken reply and reopening the mic, so the speaker has fallen silent. */
   resumeDelayMs: number;
+  /** With hands-free off: how long to keep listening for a follow-up after an answer before the mic turns off. */
+  followUpMs?: number;
 }
 
-export const DEFAULT_SIM_OPTIONS: SimOptions = { silenceMs: 1600, commandTimeoutMs: 8000, resumeDelayMs: 600 };
+export const DEFAULT_SIM_OPTIONS: SimOptions = { silenceMs: 1600, commandTimeoutMs: 8000, resumeDelayMs: 600, followUpMs: 8000 };
 
 /** More browser-ended restarts than this within RESTART_WINDOW_MS means recognition is failing in a loop. */
 const MAX_RESTARTS = 8;
@@ -68,6 +72,12 @@ const MAX_EXTENSIONS = 2;
 const AUDIO_START_FALLBACK_MS = 1500;
 /** A reply to a read-back question this short is sent as soon as it is final (no silence wait). */
 const SHORT_ANSWER_WORDS = 3;
+/**
+ * Pause before reopening the mic after the browser ends a session. Restarting in the same instant can be
+ * rejected by the speech engine, which then ends at once: reproduced as a burst of mic on/off cycles that
+ * stopped voice before anything was sent.
+ */
+const RESTART_DELAY_MS = 250;
 
 export class VoiceSimulator {
   state: SimState = 'off';
@@ -95,6 +105,11 @@ export class VoiceSimulator {
   private cued = false;
   /** The wait for a command has started for this listening phase (once, when the mic first goes live). */
   private waitStarted = false;
+  /** Listening for a follow-up after an answer (hands-free off). */
+  private followUp = false;
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
+  /** start() threw for the current listening attempt; one retry is allowed before giving up. */
+  private startRetried = false;
   private audioStartTimer: ReturnType<typeof setTimeout> | undefined;
   private trace(event: string, detail?: string): void {
     this.deps.trace?.(event, detail);
@@ -212,15 +227,25 @@ export class VoiceSimulator {
     else this.stop();
   }
 
-  private listenForCommand(confirming: boolean): void {
+  private listenForCommand(confirming: boolean, followUp = false): void {
     this.clearTimers();
     this.resetUtterance();
     this.confirming = confirming;
+    this.followUp = followUp;
     this.cued = false;
     this.waitStarted = false;
     this.openMic(); // before set(): the screen says "One moment" until the mic is really capturing
-    this.set('listening', { confirming });
+    this.set('listening', { confirming, followUp });
     this.armCommandTimeout();
+  }
+
+  /**
+   * After an answer: with hands-free on, wait for "Alexa"; with it off, listen briefly for a follow-up (a voice
+   * assistant does not make you tap again for "and each cow?"), then turn the mic off.
+   */
+  private afterReply(): void {
+    if (this.deps.handsFree?.() ?? true) this.toReady();
+    else this.listenForCommand(false, true);
   }
 
   /**
@@ -238,7 +263,8 @@ export class VoiceSimulator {
       this.cued = true;
       this.deps.chime();
     }
-    this.deps.onChange('listening', { confirming: this.confirming, starting: false, transcript: this.commandOf(this.heardText()) || undefined });
+    this.deps.onChange('listening', { confirming: this.confirming, followUp: this.followUp, starting: false, transcript: this.commandOf(this.heardText()) || undefined });
+    this.startRetried = false;
     // The wait for an answer starts when the farmer can first be heard. Only once: phones restart the mic
     // every few quiet seconds, and re-arming here kept an unanswered mic open forever (caught in testing).
     if (!this.waitStarted) {
@@ -278,7 +304,13 @@ export class VoiceSimulator {
       rec.start();
       this.trace('rec:start', rec.lang);
     } catch {
-      return this.fail('start-failed');
+      // Some engines refuse a start while the previous session is still shutting down: try once more shortly.
+      this.trace('rec:start-failed');
+      this.rec = undefined;
+      if (this.startRetried) return this.fail('start-failed');
+      this.startRetried = true;
+      this.restartTimer = setTimeout(() => this.active && (this.state === 'ready' || this.state === 'listening') && !this.rec && this.openMic(), RESTART_DELAY_MS);
+      return;
     }
     clearTimeout(this.audioStartTimer);
     this.audioStartTimer = setTimeout(() => generation === this.generation && this.onAudioStart(), AUDIO_START_FALLBACK_MS);
@@ -316,7 +348,10 @@ export class VoiceSimulator {
     this.carried = joinSegments([this.carried, this.sessionFinal, this.interim]);
     this.sessionFinal = '';
     this.interim = '';
-    this.openMic();
+    clearTimeout(this.restartTimer);
+    this.restartTimer = setTimeout(() => {
+      if (this.active && (this.state === 'ready' || this.state === 'listening') && !this.rec) this.openMic();
+    }, RESTART_DELAY_MS);
   }
 
   private onError(code: string): void {
@@ -368,7 +403,7 @@ export class VoiceSimulator {
     if (this.state !== 'listening') return;
 
     const command = this.commandOf(heard);
-    this.deps.onChange('listening', { transcript: command, confirming: this.confirming, starting: !this.micLive });
+    this.deps.onChange('listening', { transcript: command, confirming: this.confirming, followUp: this.followUp, starting: !this.micLive });
     if (command) {
       clearTimeout(this.commandTimer);
       this.extensions = 0;
@@ -392,9 +427,11 @@ export class VoiceSimulator {
     clearTimeout(this.commandTimer);
     this.commandTimer = setTimeout(() => {
       if (this.state !== 'listening' || this.commandOf(this.heardText())) return;
+      // No follow-up: the conversation is simply over; turn the mic off without a message.
+      if (this.followUp) return this.idle();
       this.deps.onNotice(this.confirming ? 'I did not hear yes or no, so nothing was saved yet. Tap Yes or No, or say "Alexa, yes".' : "I didn't hear a question. Say \"Alexa\" and try again, or type below.");
       this.idle();
-    }, this.opts.commandTimeoutMs);
+    }, this.followUp ? (this.opts.followUpMs ?? this.opts.commandTimeoutMs) : this.opts.commandTimeoutMs);
   }
 
   /** No new words for `silenceMs`: send the command if its words are final, otherwise wait a little or hand it over. */
@@ -436,7 +473,7 @@ export class VoiceSimulator {
       if (!this.active) return;
       // A read-back question ("Shall I record ₹500…?") is answered without saying "Alexa" again.
       if (reply.awaitingConfirmation) this.listenForCommand(true);
-      else this.idle();
+      else this.afterReply();
     } finally {
       this.busy = false;
     }
@@ -462,5 +499,6 @@ export class VoiceSimulator {
     clearTimeout(this.silenceTimer);
     clearTimeout(this.commandTimer);
     clearTimeout(this.audioStartTimer);
+    clearTimeout(this.restartTimer);
   }
 }

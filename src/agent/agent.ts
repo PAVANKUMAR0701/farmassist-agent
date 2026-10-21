@@ -25,7 +25,7 @@ export const agentSystemPrompt = (today: string) => [
   '- To correct an expense, use its entryId from an earlier tool result in this conversation. Never invent ids.',
   '- New records may have any date up to today, including dates in the past. Only future dates are refused.',
   '- Animals: register each new animal with register_animal (one call per animal) and rename or change one with update_animal. Use list_animals for "how many cows". Do not use activities to name animals.',
-  '- Milk: record_milk (litres, per animal or for the whole herd); for any question about milk use get_milk_summary. Crops: record_sowing when planted, record_harvest for what came back, list_crops to compare. Insurance: add_insurance. Reminders: add_reminder and list_reminders.',
+  '- Milk: record_milk (litres, per animal or for the whole herd); for any question about milk use get_milk_summary, with groupBy "animal" when the farmer asks about each cow, per cow or a list of cows (its records list each entry; never add cows or records that are not there). Crops: record_sowing when planted, record_harvest for what came back, list_crops to compare. Insurance: add_insurance. Reminders: add_reminder and list_reminders.',
   '- Refer to animals, crops and reminders by name; only use an id that a tool result in this conversation gave you.',
   '- Pass quantities exactly as the farmer said them, with their unit (for example quantity 30 and unit "quintal"). Never convert units yourself.',
   '- When an animal is sold or dies, call update_animal with only animalName and status ("sold" or "died"). Never copy details from one animal to another.',

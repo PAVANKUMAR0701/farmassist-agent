@@ -84,7 +84,44 @@ describe('milk', () => {
       calculatedBy: 'server',
     });
     const lakshmi = await ok(callTool(config, 'get_milk_summary', { animalName: 'Lakshmi', period: 'today' }));
-    expect(lakshmi.content[0]!.text.split('\n')[0]).toBe('Milk from Lakshmi from 2026-10-14 to 2026-10-14: 15.75 L over 1 day with records (average 15.75 L per day).');
+    expect(lakshmi.content[0]!.text.split('\n')[0]).toBe(
+      'Milk from Lakshmi from 2026-10-14 to 2026-10-14: 15.75 L over 1 day with records (average 15.75 L per day). Records: 2026-10-14 morning Lakshmi 8.5 L; 2026-10-14 evening Lakshmi 7.25 L.',
+    );
+  });
+
+  it("answers 'each cow's milk today' with every cow and every record, and never invents any (seen live 2026-10-21)", async () => {
+    const { config } = makeTestConfig();
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Geeta', type: 'cow' }, { name: 'Maya', type: 'cow' }, { name: 'Lakshmi', type: 'cow' }, { name: 'Sita', type: 'cow' }] }));
+    await ok(callTool(config, 'record_milk', { litres: 7, session: 'morning', animalName: 'Geeta' }));
+    await ok(callTool(config, 'record_milk', { litres: 6, session: 'morning', animalName: 'Maya' }));
+    await ok(callTool(config, 'record_milk', { litres: 5, session: 'evening', animalName: 'Lakshmi' }));
+    await ok(callTool(config, 'record_milk', { litres: 2, session: 'evening' })); // not for one animal
+    await ok(callTool(config, 'record_milk', { litres: 9, session: 'morning', animalName: 'Sita', date: '2026-10-13' })); // yesterday
+
+    const perCow = await ok(callTool(config, 'get_milk_summary', { period: 'today', groupBy: 'animal' }));
+    expect(perCow.content[0]!.text.split('\n')[0]).toBe(
+      'Milk from 2026-10-14 to 2026-10-14: 20 L over 1 day with records (average 20 L per day). By animal: Geeta 7 L, Maya 6 L, Lakshmi 5 L, whole herd 2 L. ' +
+        'Records: 2026-10-14 morning Geeta 7 L; 2026-10-14 morning Maya 6 L; 2026-10-14 evening Lakshmi 5 L; 2026-10-14 evening whole herd 2 L.',
+    );
+    expect(perCow.structuredContent).toMatchObject({
+      records: [
+        { date: '2026-10-14', session: 'morning', animalName: 'Geeta', litresDisplay: '7 L' },
+        { date: '2026-10-14', session: 'morning', animalName: 'Maya', litresDisplay: '6 L' },
+        { date: '2026-10-14', session: 'evening', animalName: 'Lakshmi', litresDisplay: '5 L' },
+        { date: '2026-10-14', session: 'evening', animalName: 'whole herd', litresDisplay: '2 L' },
+      ],
+    });
+    // Sita gave nothing today: she is not listed, and yesterday's milk is not counted as today's.
+    expect(perCow.content[0]!.text).not.toContain('Sita');
+
+    // The plain total question still answers with the total, and now also lists today's records.
+    const total = await ok(callTool(config, 'get_milk_summary', { period: 'today' }));
+    expect(total.structuredContent).toMatchObject({ totalDisplay: '20 L', entryCount: 4 });
+    expect(total.content[0]!.text.split('\n')[0]).toContain('Records: 2026-10-14 morning Geeta 7 L;');
+
+    const none = await ok(callTool(config, 'get_milk_summary', { period: 'today', animalName: 'Sita' }));
+    expect(none.content[0]!.text.split('\n')[0]).toBe('No milk recorded from Sita from 2026-10-14 to 2026-10-14.');
+    expect(none.structuredContent).not.toHaveProperty('records');
   });
 
   it('refuses milk for an animal that is not registered, and impossible amounts', async () => {

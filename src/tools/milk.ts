@@ -12,6 +12,9 @@ import { runTool, ToolUserError } from './tool-errors.js';
 
 const SESSIONS = ['morning', 'evening', 'whole_day'] as const;
 
+/** Individual milk records are listed in a summary up to this many (a month of one cow, or a day of a herd). */
+const MAX_LISTED_RECORDS = 31;
+
 interface MilkData extends Record<string, unknown> {
   date: string;
   millilitres: number;
@@ -95,7 +98,9 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
       title: 'Milk totals',
       description:
         'Verified milk totals for a period (default: last 7 days), optionally for one animal, by day or by animal, with the average per recorded day. ' +
-        'Use it for "how much milk this week", "how much does Lakshmi give". Repeat the returned *Display values exactly.',
+        'Use it for "how much milk this week", "how much does Lakshmi give". For each cow, per cow, which cow, or a list of cows\' milk use groupBy "animal". ' +
+        'It also lists the individual records (date, session, cow or whole herd, litres) when there are few enough; quote those for "each record". ' +
+        'Repeat the returned *Display values exactly; never add a cow or record that is not listed.',
       inputSchema: {
         ...dateRangeInput,
         ...animalRefInput,
@@ -110,6 +115,10 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
         daysWithRecords: z.number().int(),
         averagePerRecordedDayDisplay: z.string().optional(),
         groups: z.array(z.object({ key: z.string(), millilitres: z.number().int(), display: z.string(), entryCount: z.number().int() })),
+        records: z
+          .array(z.object({ date: z.string(), session: z.string(), animalName: z.string(), litresDisplay: z.string() }))
+          .optional()
+          .describe(`Each milk record, oldest first, when there are at most ${MAX_LISTED_RECORDS}. "whole herd" means it was not recorded for one animal.`),
         calculatedBy: z.literal('server'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -138,6 +147,12 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
           groups.set(key, g);
         }
         const days = new Set(entries.map((m) => m.data.date)).size;
+        const records =
+          entries.length > 0 && entries.length <= MAX_LISTED_RECORDS
+            ? [...entries]
+                .sort((a, b) => a.data.date.localeCompare(b.data.date) || SESSIONS.indexOf(a.data.session) - SESSIONS.indexOf(b.data.session))
+                .map((m) => ({ date: m.data.date, session: m.data.session, animalName: m.data.animalName ?? 'whole herd', litresDisplay: formatLitres(m.data.millilitres) }))
+            : undefined;
         const average = days > 0 ? Math.round(total / days) : undefined;
         const sorted = [...groups.entries()]
           .map(([key, g]) => ({ key, ...g, display: formatLitres(g.millilitres) }))
@@ -151,14 +166,18 @@ export function registerMilkTools(server: McpServer, deps: ToolDeps): void {
           daysWithRecords: days,
           ...(average !== undefined ? { averagePerRecordedDayDisplay: formatLitres(average) } : {}),
           groups: sorted,
+          ...(records ? { records } : {}),
           calculatedBy: 'server' as const,
         };
         const whose = animal?.data.name ? ` from ${animal.data.name}` : '';
+        // Per cow and per record in the text too, so "each cow's milk today" can be answered from what the
+        // model reads (seen live 2026-10-21: only the 18 L total came back for that question).
         const text =
           entries.length === 0
             ? `No milk recorded${whose} from ${range.from} to ${range.to}.`
             : `Milk${whose} from ${range.from} to ${range.to}: ${structured.totalDisplay} over ${plural(days, 'day')} with records (average ${structured.averagePerRecordedDayDisplay} per day).` +
-              (args.groupBy === 'animal' && sorted.length > 1 ? ` Most from ${sorted[0]!.key}: ${sorted[0]!.display}.` : '');
+              (args.groupBy === 'animal' && sorted.length > 0 ? ` By animal: ${sorted.map((g) => `${g.key} ${g.display}`).join(', ')}.` : '') +
+              (records ? ` Records: ${records.map((r) => `${r.date} ${r.session.replace("_", " ")} ${r.animalName} ${r.litresDisplay}`).join('; ')}.` : '');
         return { content: [{ type: 'text' as const, text: `${text}\n${JSON.stringify(structured)}` }], structuredContent: structured };
       }),
   );

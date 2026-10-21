@@ -149,7 +149,8 @@ describe('VoiceSimulator', () => {
     const { sim, deps, mic, recognisers } = setup();
     sim.start();
     mic().hear('Alexa how much did I');
-    mic().end(); // the browser stops after a phrase; the simulator reopens the mic
+    mic().end(); // the browser stops after a phrase; the simulator reopens the mic shortly after
+    await vi.advanceTimersByTimeAsync(250);
     expect(recognisers.length).toBe(2);
     mic().hear('spend on feed this month');
     await vi.advanceTimersByTimeAsync(1000);
@@ -225,12 +226,16 @@ describe('VoiceSimulator', () => {
     expect(sim.isActive).toBe(false);
   });
 
-  it('keeps waiting through "no-speech" timeouts, but gives up on a restart loop', () => {
+  it('keeps waiting through "no-speech" timeouts, but gives up on a restart loop', async () => {
     const { sim, mic } = setup();
     sim.start();
     mic().error('no-speech');
+    await vi.advanceTimersByTimeAsync(250);
     expect(sim.state).toBe('ready');
-    for (let i = 0; i < 9 && sim.state === 'ready'; i++) mic().end();
+    for (let i = 0; i < 9 && sim.state === 'ready'; i++) {
+      mic()?.end();
+      await vi.advanceTimersByTimeAsync(250);
+    }
     expect(sim.state).toBe('error');
   });
 
@@ -268,13 +273,66 @@ describe('VoiceSimulator', () => {
     expect(mic()).toBeDefined();
   });
 
-  it('with hands-free off, the mic turns off after the reply', async () => {
-    const { sim, mic, recognisers } = setup(undefined, true, false);
+  it('with hands-free off, it listens briefly for a follow-up after the reply, then the mic turns off', async () => {
+    const { sim, mic, recognisers, views, deps } = setup(undefined, true, false);
     sim.talk();
     mic().hear('how much did I spend today');
     await vi.advanceTimersByTimeAsync(1000 + 100);
+    expect(sim.state).toBe('listening');
+    expect(views.at(-1)).toMatchObject({ state: 'listening', followUp: true });
+    await vi.advanceTimersByTimeAsync(1500 + 5000 + 100); // mic-live fallback, then the follow-up window
     expect(sim.state).toBe('off');
     expect(recognisers.filter((r) => r.running)).toHaveLength(0);
+    expect(deps.onNotice).not.toHaveBeenCalled(); // no follow-up is not an error
+  });
+
+  // ---- Seen live 2026-10-21: a follow-up after the first answer was never heard
+
+  it('hands-free off: a spoken follow-up right after the answer is heard and sent, without tapping again', async () => {
+    const { sim, mic, deps } = setup(undefined, true, false);
+    sim.talk();
+    mic().audioStart();
+    mic().hear('how much did I spend today');
+    await vi.advanceTimersByTimeAsync(1000 + 100); // sent, reply spoken, mic reopened
+    mic().audioStart();
+    mic().hear('show me each cow milk today');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(deps.submit).toHaveBeenNthCalledWith(1, 'how much did I spend today');
+    expect(deps.submit).toHaveBeenNthCalledWith(2, 'show me each cow milk today');
+    expect(deps.submit).toHaveBeenCalledTimes(2);
+  });
+
+  it('when the speech engine ends a session, the mic is reopened after a short pause, not in a burst of restarts', async () => {
+    const { sim, mic, recognisers, deps } = setup(undefined, true, false);
+    sim.talk();
+    mic().audioStart();
+    mic().hear('how much did I spend today');
+    mic().end(); // an engine that ends the session after each final result
+    expect(recognisers.length).toBe(1); // nothing restarted in the same instant
+    await vi.advanceTimersByTimeAsync(250);
+    expect(recognisers.length).toBe(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(deps.submit).toHaveBeenCalledExactlyOnceWith('how much did I spend today');
+    expect(sim.state).not.toBe('error');
+  });
+
+  it('a start() the engine refuses is retried once, then voice stops with a clear error', async () => {
+    const { sim, deps, views } = setup();
+    let refuse = 0;
+    deps.createRecognition = (() => {
+      const r = new FakeRecognition();
+      r.start = () => {
+        refuse++;
+        throw new Error('InvalidStateError');
+      };
+      return r;
+    }) as typeof deps.createRecognition;
+    sim.talk();
+    expect(refuse).toBe(1);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(refuse).toBe(2);
+    expect(sim.state).toBe('error');
+    expect(views.at(-1)!.message).toMatch(/could not start/);
   });
 
   it('the mic button while listening cancels without sending', async () => {
@@ -324,6 +382,7 @@ describe('VoiceSimulator', () => {
       deps.chime.mockClear();
       mic().audioStart();
       mic().end(); // the phone ends the session; the simulator reopens the mic
+      await vi.advanceTimersByTimeAsync(250);
       mic().audioStart();
       expect(deps.chime).toHaveBeenCalledOnce();
     });
