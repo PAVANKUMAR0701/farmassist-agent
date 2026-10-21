@@ -4,6 +4,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { describe, expect, it, vi } from 'vitest';
 import { FarmMcpClient, type FarmToolClient } from '../../src/agent/mcp-client.js';
 import { handleChatRequest, type ChatAppDeps } from '../../src/chat/app.js';
+import { toLambdaResult } from '../../src/lambda/function-url.js';
 import { CognitoAuthenticator, type ChatAuthenticator, type ChatUser } from '../../src/chat/auth.js';
 import { DynamoConversationStore, InMemoryConversationStore } from '../../src/chat/conversations.js';
 import { handleMcpRequest } from '../../src/mcp/http.js';
@@ -54,6 +55,19 @@ describe('static web client and config', () => {
     expect(csp).toContain("connect-src 'self' https://cognito-idp.ap-south-1.amazonaws.com");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('serves images byte for byte, cached, and the Lambda result carries them base64-encoded', async () => {
+    const bytes = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0xff, 0x10, 0x80]); // binary, not valid UTF-8
+    const { deps } = setup({
+      assets: { '/images/farm-background.webp': { contentType: 'image/webp', body: bytes.toString('base64'), encoding: 'base64' } },
+    });
+    const res = await handleChatRequest(new Request('https://chat.example/images/farm-background.webp'), deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/webp');
+    expect(res.headers.get('cache-control')).toBe('public, max-age=86400');
+    const lambda = await toLambdaResult(res);
+    expect(lambda).toMatchObject({ statusCode: 200, isBase64Encoded: true, body: bytes.toString('base64') });
   });
 
   it('publishes only public sign-in settings, and 404s unknown paths', async () => {

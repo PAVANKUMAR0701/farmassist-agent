@@ -680,7 +680,7 @@ button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #26844
   --tile-amber: #fff5ea; --tile-amber-ink: #d4772a;
   --tile-mint: #eef8ef; --tile-mint-ink: #2f8f3c;
   --tile-rose: #fff1f1; --tile-rose-ink: #d63c3c;
-  --scenic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 900' preserveAspectRatio='xMidYMid slice'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23cfe6e4'/%3E%3Cstop offset='.45' stop-color='%23e9efd9'/%3E%3Cstop offset='1' stop-color='%23f3eccf'/%3E%3C/linearGradient%3E%3ClinearGradient id='f1' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%238fbf6a'/%3E%3Cstop offset='1' stop-color='%234f8f3c'/%3E%3C/linearGradient%3E%3ClinearGradient id='f2' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%235f9e45'/%3E%3Cstop offset='1' stop-color='%232f6a2c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='400' height='900' fill='url(%23sky)'/%3E%3Ccircle cx='300' cy='120' r='60' fill='%23fff7d6' opacity='.7'/%3E%3Cpath d='M0 300 Q80 230 160 270 T320 250 T400 260 V900 H0Z' fill='%239db8a6' opacity='.75'/%3E%3Cpath d='M0 360 Q100 300 200 340 T400 320 V900 H0Z' fill='%237fa889' opacity='.85'/%3E%3Cpath d='M0 430 Q120 380 240 420 T400 400 V900 H0Z' fill='url(%23f1)'/%3E%3Cpath d='M0 520 Q140 470 260 510 T400 495 V900 H0Z' fill='url(%23f2)'/%3E%3Cg stroke='%2386b863' stroke-width='3' opacity='.55' fill='none'%3E%3Cpath d='M-20 600 Q200 560 420 610'/%3E%3Cpath d='M-20 640 Q200 600 420 655'/%3E%3Cpath d='M-20 685 Q200 645 420 705'/%3E%3Cpath d='M-20 735 Q200 695 420 760'/%3E%3Cpath d='M-20 790 Q200 750 420 820'/%3E%3C/g%3E%3Cpath d='M0 840 Q100 800 200 830 T400 820 V900 H0Z' fill='%23255c26'/%3E%3Cg fill='%231f5a2a'%3E%3Cpath d='M0 0 C60 20 90 70 70 140 C40 100 10 80 0 70Z'/%3E%3Cpath d='M0 40 C50 70 60 120 30 180 C20 130 5 110 0 100Z' fill='%232f7a36'/%3E%3Cpath d='M400 0 C340 30 320 80 340 150 C370 110 390 90 400 80Z'/%3E%3Cpath d='M400 50 C360 90 360 140 380 190 C390 140 398 120 400 115Z' fill='%232f7a36'/%3E%3Cpath d='M0 900 C30 820 80 800 120 830 C80 850 50 870 40 900Z' fill='%232c6e31'/%3E%3Cpath d='M400 900 C370 830 330 815 290 840 C330 855 355 875 360 900Z' fill='%232c6e31'/%3E%3C/g%3E%3Crect x='245' y='805' width='42' height='26' fill='%238a5a3b'/%3E%3Cpath d='M240 806 L266 788 L292 806Z' fill='%236b3f2a'/%3E%3C/svg%3E");
+  --scenic: url("/images/farm-background.webp");
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -943,3 +943,14 @@ body { background: var(--paper); color: var(--navy); font-family: 'Segoe UI Vari
 .stat .stat-icon .ico { width: 17px; height: 17px; }
 .stat-chevron .ico { width: 14px; height: 14px; }
 .stat-label { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.2; }
+
+/* Drawer background: the farm photo with a light green wash (as supplied) */
+.scenic {
+  background-image: linear-gradient(rgba(3, 43, 30, 0.18), rgba(3, 43, 30, 0.35)), var(--scenic);
+  background-size: cover;
+  background-position: 30% center;
+  background-repeat: no-repeat;
+  background-color: #2f6a2c;
+}
+.scenic::before { content: none; }
+.drawer { background: linear-gradient(180deg, rgba(6, 52, 38, 0.78), rgba(4, 40, 30, 0.86)); }

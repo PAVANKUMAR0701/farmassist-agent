@@ -23,7 +23,9 @@ import { CONVERSATION_ID, type ConversationStore } from './conversations.js';
 
 export interface StaticAsset {
   contentType: string;
+  /** Text, or base64 when `encoding` is "base64" (images). */
   body: string;
+  encoding?: 'base64';
 }
 
 export interface PublicConfig {
@@ -114,10 +116,12 @@ export async function handleChatRequest(request: Request, deps: ChatAppDeps): Pr
   if (request.method === 'GET') {
     const asset = deps.assets[path];
     if (asset) {
-      return new Response(asset.body, {
+      const binary = asset.encoding === 'base64';
+      return new Response(binary ? Buffer.from(asset.body, 'base64') : asset.body, {
         headers: {
           'Content-Type': asset.contentType,
-          'Cache-Control': 'no-cache',
+          // Images never change under the same name in a deploy; pages and code are revalidated each time.
+          'Cache-Control': binary ? 'public, max-age=86400' : 'no-cache',
           'Content-Security-Policy': contentSecurityPolicy(deps.publicConfig),
           ...SECURITY_HEADERS,
         },

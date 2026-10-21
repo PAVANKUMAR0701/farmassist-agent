@@ -4,7 +4,7 @@
  * (the npm pre-scripts do this automatically for typecheck and test).
  */
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const bundle = await build({
   entryPoints: ['web/src/main.ts'],
@@ -17,11 +17,17 @@ const bundle = await build({
 });
 const appJs = bundle.outputFiles[0]!.text;
 
-const assets = {
+const IMAGE_TYPES: Record<string, string> = { webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml' };
+const assets: Record<string, { contentType: string; body: string; encoding?: 'base64' }> = {
   '/index.html': { contentType: 'text/html; charset=utf-8', body: readFileSync('web/index.html', 'utf8') },
   '/styles.css': { contentType: 'text/css; charset=utf-8', body: readFileSync('web/styles.css', 'utf8') },
   '/app.js': { contentType: 'text/javascript; charset=utf-8', body: appJs },
 };
+// Images in web/images/ are served at /images/<name>, stored base64 (e.g. the drawer's farm background).
+for (const name of readdirSync('web/images')) {
+  const type = IMAGE_TYPES[name.split('.').pop()!.toLowerCase()];
+  if (type) assets[`/images/${name}`] = { contentType: type, body: readFileSync(`web/images/${name}`).toString('base64'), encoding: 'base64' };
+}
 
 writeFileSync(
   'src/chat/web-assets.generated.ts',

@@ -20,8 +20,12 @@ export function toWebRequest(event: LambdaFunctionURLEvent): Request {
   return new Request(url, { method, headers, body });
 }
 
-/** Converts a web-standard Response into a Function URL result. MCP responses are JSON text, never binary. */
+/** Converts a web-standard Response into a Function URL result. Images go out base64-encoded; everything else is text. */
 export async function toLambdaResult(response: Response): Promise<FunctionUrlResult> {
+  if (/^image\//.test(response.headers.get('content-type') ?? '')) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return { statusCode: response.status, headers: Object.fromEntries(response.headers), body: bytes.toString('base64'), isBase64Encoded: true };
+  }
   const text = await response.text();
   return {
     statusCode: response.status,
