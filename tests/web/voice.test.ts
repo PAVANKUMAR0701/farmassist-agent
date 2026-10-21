@@ -45,11 +45,11 @@ describe('speak (reply read aloud)', () => {
       cancel: () => calls.push('cancel'),
       resume: () => calls.push('resume'),
       speak: (u: { text: string; onend?: () => void }) => (calls.push(`speak:${u.text}`), spoken.push(u)),
-      getVoices: () => [],
+      getVoices: () => [{ name: 'Test Female', lang: 'en-IN', localService: true }],
     };
     class Utterance {
       lang = '';
-      voice = null;
+      voice: unknown = null;
       rate = 1;
       onend?: () => void;
       onerror?: () => void;
@@ -68,6 +68,7 @@ describe('speak (reply read aloud)', () => {
   it('speaks straight away when nothing is playing (no cancel right before speak)', async () => {
     const { calls, spoken } = fakeEngine(false);
     const done = speak('Recorded ₹500.00 on feed.', 'en-IN');
+    await new Promise((r) => setTimeout(r, 0)); // speak() first waits for the voice list
     expect(calls).toEqual(['resume', 'speak:Recorded 500 rupees on feed.']);
     spoken[0]!.onend!();
     await done;
@@ -77,8 +78,50 @@ describe('speak (reply read aloud)', () => {
     vi.useFakeTimers();
     const { calls } = fakeEngine(true);
     void speak('Okay, nothing was saved.', 'en-IN');
+    await vi.advanceTimersByTimeAsync(0);
     expect(calls).toEqual(['cancel']);
     await vi.advanceTimersByTimeAsync(120);
     expect(calls).toEqual(['cancel', 'resume', 'speak:Okay, nothing was saved.']);
+  });
+
+  it('never cuts a slow voice short while the engine is still speaking (Edge natural voices)', async () => {
+    vi.useFakeTimers();
+    const { calls, spoken } = fakeEngine(false);
+    const text = 'Spent 3,700 rupees in total from 21 October 2026 to 21 October 2026 (2 entries).';
+    let finished = false;
+    void speak(text, 'en-IN').then(() => (finished = true));
+    await vi.advanceTimersByTimeAsync(0);
+    (window.speechSynthesis as { speaking: boolean }).speaking = true;
+    (spoken[0] as { onstart?: () => void }).onstart?.();
+    await vi.advanceTimersByTimeAsync(20000); // well past the old 4 s + 90 ms per character limit
+    expect(calls.filter((c) => c === 'cancel')).toEqual([]);
+    expect(finished).toBe(false);
+    spoken[0]!.onend!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finished).toBe(true);
+  });
+
+  it('moves on when the engine goes quiet but never fires onend (a Chrome bug)', async () => {
+    vi.useFakeTimers();
+    const { spoken } = fakeEngine(false);
+    let finished = false;
+    void speak('Recorded 500 rupees on feed.', 'en-IN').then(() => (finished = true));
+    await vi.advanceTimersByTimeAsync(0);
+    (spoken[0] as { onstart?: () => void }).onstart?.(); // engine idle from here, no onend
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(finished).toBe(true);
+  });
+});
+
+describe('speak: a browser without a voice for the language', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('stays silent (no foreign voice reading Tamil) and reports it, so the app can show the text-only note', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('window', { speechSynthesis: { speaking: false, pending: false, cancel: () => calls.push('cancel'), resume: () => calls.push('resume'), speak: () => calls.push('speak'), getVoices: () => [{ name: 'Google Deutsch', lang: 'de-DE' }, { name: 'Google UK English Female', lang: 'en-GB' }] } });
+    vi.stubGlobal('SpeechSynthesisUtterance', class { constructor(readonly text: string) {} });
+    const voice = await import('../../web/src/voice.js');
+    await voice.speak('வணக்கம்', 'ta-IN');
+    expect(calls).toEqual([]);
+    expect(voice.lastSpeakSkippedFor).toBe('ta-IN');
   });
 });

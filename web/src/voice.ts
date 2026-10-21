@@ -155,24 +155,111 @@ export function speakable(text: string): string {
     .replace(/→/g, ' to ');
 }
 
+/** The voice fields the picker needs (a SpeechSynthesisVoice, or a plain object in tests). */
+export interface VoiceLike {
+  name: string;
+  lang: string;
+  localService?: boolean;
+}
+
+// Voice names differ in every browser and system, so gender is recognised from the name. Female first.
+const FEMALE =
+  /female|zira|hazel|susan|heera|kalpana|neerja|swara|स्वरा|pallavi|பல்லவி|சரண்யா|கனி|வெண்பா|aria|jenny|\bava\b|emma|michelle|\bana\b|sonia|libby|maisie|natasha|clara|emily|molly|rosa|luna|leah|asilia|ezinne|imani|samantha|karen|moira|tessa|veena|lekha|google हिन्दी|google us english|google uk english female/i;
+const MALE =
+  /\bmale\b|david|\bmark\b|\bguy\b|ryan|thomas|william|liam|connor|andrew|brian|christopher|\beric\b|roger|steffan|prabhat|madhur|मधुर|valluvar|வள்ளுவர்|குமார்|சூர்யா|அன்பு|ravi|hemant|george|james|wayne|luke|mitchell|abeo|chilemba|elimu|\bsam\b|rishi|\byan\b/i;
+/** For English, a region closer to the farmer sounds more natural. */
+const REGION_ORDER: Record<string, string[]> = { en: ['IN', 'GB', 'US', 'AU'], hi: ['IN'], ta: ['IN', 'LK', 'SG', 'MY'] };
+
+const base = (lang: string) => lang.toLowerCase().split(/[-_]/)[0]!;
+const region = (lang: string) => (lang.split(/[-_]/)[1] ?? '').toUpperCase();
+const genderScore = (v: VoiceLike) => (FEMALE.test(v.name) && !/\bmale\b/i.test(v.name.replace(/female/gi, '')) ? 0 : MALE.test(v.name) ? 2 : 1);
+
+/**
+ * Chooses the reply voice the same way in every browser: the farmer's saved voice if this browser has it
+ * (same language), otherwise a female voice in the language, preferring the farmer's region. Returns
+ * undefined when the browser has no voice for the language at all: a foreign voice must not read it.
+ */
+export function pickVoice<V extends VoiceLike>(voices: readonly V[], lang: string, preferredName?: string): V | undefined {
+  const sameLanguage = voices.filter((v) => base(v.lang) === base(lang));
+  if (sameLanguage.length === 0) return undefined;
+  const saved = preferredName ? sameLanguage.find((v) => v.name === preferredName) : undefined;
+  if (saved) return saved;
+  const order = REGION_ORDER[base(lang)] ?? [region(lang)];
+  const regionRank = (v: V) => (region(v.lang) === region(lang) ? 0 : order.includes(region(v.lang)) ? 1 + order.indexOf(region(v.lang)) : 9);
+  return [...sameLanguage].sort((a, b) => genderScore(a) - genderScore(b) || regionRank(a) - regionRank(b) || Number(a.localService ?? false) - Number(b.localService ?? false))[0];
+}
+
+/** Voices for a language, for the settings list (female first, then by region). */
+export function voicesFor<V extends VoiceLike>(voices: readonly V[], lang: string): V[] {
+  const sameLanguage = voices.filter((v) => base(v.lang) === base(lang));
+  const order = REGION_ORDER[base(lang)] ?? [];
+  const regionRank = (v: V) => (order.includes(region(v.lang)) ? order.indexOf(region(v.lang)) : 9);
+  return [...sameLanguage].sort((a, b) => regionRank(a) - regionRank(b) || genderScore(a) - genderScore(b) || a.name.localeCompare(b.name));
+}
+
+/**
+ * The browser's voice list. It is empty on the first call in Chrome and Edge (measured 2026-10-21: 0 voices,
+ * then 22 / 324 after "voiceschanged"), so wait for it, but never longer than `maxWaitMs`.
+ */
+export function loadVoices(maxWaitMs = 2000): Promise<SpeechSynthesisVoice[]> {
+  if (!speechOutputSupported()) return Promise.resolve([]);
+  const synth = window.speechSynthesis;
+  const now = synth.getVoices();
+  if (now.length) return Promise.resolve(now);
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      synth.removeEventListener?.('voiceschanged', finish);
+      resolve(synth.getVoices());
+    };
+    const timer = setTimeout(finish, maxWaitMs);
+    synth.addEventListener?.('voiceschanged', finish);
+  });
+}
+
+/** Set when the last reply could not be read aloud because this browser has no voice for the language. */
+export let lastSpeakSkippedFor: string | undefined;
+
 /** Speaks text in the chosen language. Resolves when finished (or immediately if speech is unavailable). */
-export function speak(text: string, lang: string): Promise<void> {
-  if (!speechOutputSupported() || !text) return Promise.resolve();
+export async function speak(text: string, lang: string, preferredVoice?: string): Promise<void> {
+  if (!speechOutputSupported() || !text) return;
   const synth = window.speechSynthesis;
   // Never talk over the previous reply. Cancel only when something is playing: Chrome and Edge can silently
   // drop an utterance started in the same moment as a cancel, so give the engine a beat after one.
   const busy = synth.speaking || synth.pending;
   if (busy) synth.cancel();
+  const voice = pickVoice(await loadVoices(), lang, preferredVoice);
+  lastSpeakSkippedFor = undefined;
+  if (!voice && synth.getVoices().length > 0) {
+    // e.g. Chrome on Windows has no Tamil voice: its default (German) voice would read Tamil script as noise.
+    lastSpeakSkippedFor = lang;
+    return;
+  }
   const utterance = new SpeechSynthesisUtterance(speakable(text));
-  utterance.lang = lang;
-  const voices = synth.getVoices();
-  utterance.voice = voices.find((v) => v.lang === lang) ?? voices.find((v) => v.lang.startsWith(lang.slice(0, 2))) ?? null;
+  utterance.lang = voice?.lang ?? lang;
+  if (voice) utterance.voice = voice;
   utterance.rate = 0.95;
   return new Promise((resolve) => {
     // Chrome sometimes never fires onend (long text, no voice installed); never wait forever, or the
-    // voice simulator would stay in Speaking with the mic closed. About 12 characters a second, plus slack.
-    const limit = setTimeout(() => (synth.cancel(), resolve()), 4000 + utterance.text.length * 90);
-    const done = () => (clearTimeout(limit), resolve());
+    // voice simulator would stay in Speaking with the mic closed. A fixed length-based limit cut real replies
+    // short (measured 2026-10-21: Edge's natural voices took over 11 s for 80 characters and were cancelled),
+    // so watch the engine instead: the reply is over once it has started (or had 5 s to) and the engine has
+    // been idle for two checks in a row. The hard cap is only a last resort.
+    let started = false;
+    let idleChecks = 0;
+    const startedAt = Date.now();
+    const watch = setInterval(() => {
+      if (!started && Date.now() - startedAt < 5000) return;
+      idleChecks = synth.speaking || synth.pending ? 0 : idleChecks + 1;
+      if (idleChecks >= 2) done();
+    }, 1000);
+    const limit = setTimeout(() => (synth.cancel(), done()), 30000 + utterance.text.length * 250);
+    function done() {
+      clearInterval(watch);
+      clearTimeout(limit);
+      resolve();
+    }
+    utterance.onstart = () => (started = true);
     utterance.onend = done;
     utterance.onerror = done;
     const start = () => {
@@ -193,11 +280,17 @@ const PREFS_KEY = 'farmassist.voice';
 export interface VoicePrefs {
   lang: string;
   speakReplies: boolean;
+  /** The farmer's chosen reply voice (a browser voice name); used when this browser has it. */
+  voiceName?: string;
 }
 export function loadVoicePrefs(): VoicePrefs {
   try {
     const saved = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<VoicePrefs>;
-    return { lang: VOICE_LANGUAGES.some(([l]) => l === saved.lang) ? saved.lang! : 'en-IN', speakReplies: saved.speakReplies !== false };
+    return {
+      lang: VOICE_LANGUAGES.some(([l]) => l === saved.lang) ? saved.lang! : 'en-IN',
+      speakReplies: saved.speakReplies !== false,
+      ...(typeof saved.voiceName === 'string' && saved.voiceName ? { voiceName: saved.voiceName } : {}),
+    };
   } catch {
     return { lang: 'en-IN', speakReplies: true };
   }

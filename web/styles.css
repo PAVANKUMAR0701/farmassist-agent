@@ -1087,3 +1087,8 @@ body { background: var(--paper); color: var(--navy); font-family: 'Segoe UI Vari
 .stat { padding: 10px 12px; }
 .stat-value { font-size: 1.3rem; margin-top: 4px; }
 .app-wide .content { padding-bottom: 12px; }
+.voice-pick { display: grid; gap: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.08); color: #eef6f0; font-size: 0.82rem; }
+.voice-pick span { display: inline-flex; align-items: center; gap: 6px; }
+.voice-pick .ico { width: 16px; height: 16px; }
+.voice-pick select { min-height: 36px; padding: 4px 8px; background: rgba(0, 0, 0, 0.25); color: #eef6f0; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; font-size: 0.82rem; }
+.voice-pick select option { color: #13213a; }

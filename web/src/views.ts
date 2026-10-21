@@ -6,7 +6,7 @@ import { ApiError, displayName, readTool, sendChat, sendPhoto, type ChatReply } 
 import { shrinkPhoto } from './photo.js';
 import { append, badge, clear, h, icon, label, notice, pageHeader, shortDate, spinner, type IconName } from './dom.js';
 import { VoiceSimulator, type SimState, type SimView } from './simulator.js';
-import { createRecognition, plainText, loadVoicePrefs, saveVoicePrefs, speak, speechInputSupported, speechOutputSupported, stopSpeaking, VOICE_LANGUAGES } from './voice.js';
+import { createRecognition, plainText, loadVoicePrefs, loadVoices, voicesFor, lastSpeakSkippedFor, saveVoicePrefs, speak, speechInputSupported, speechOutputSupported, stopSpeaking, VOICE_LANGUAGES } from './voice.js';
 
 const CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'other'];
 const ACTIVITY_TYPES = ['milking', 'vaccination', 'sowing', 'harvesting', 'irrigation', 'other'];
@@ -336,12 +336,23 @@ export function chatView(): HTMLElement {
     talk.replaceChildren(icon(state === 'listening' || state === 'speaking' ? 'stop' : 'mic'));
     input.placeholder = state === 'listening' ? 'Listening…' : 'Ask FarmAssist…';
   };
+  /** Reads a reply aloud with the farmer's voice choice; says once if this browser cannot speak the language. */
+  const skipNoticeShown = new Set<string>();
+  async function speakReply(text: string): Promise<void> {
+    await speak(text, prefs.lang, prefs.voiceName);
+    if (lastSpeakSkippedFor && !skipNoticeShown.has(lastSpeakSkippedFor)) {
+      skipNoticeShown.add(lastSpeakSkippedFor);
+      const name = VOICE_LANGUAGES.find(([l]) => l === lastSpeakSkippedFor)?.[1] ?? lastSpeakSkippedFor;
+      bubble('bot', notice('info', `This browser has no ${name} voice, so replies are shown as text only. Microsoft Edge includes ${name} voices; or choose English.`));
+    }
+  }
+
   const sim = new VoiceSimulator({
     createRecognition,
     lang: () => prefs.lang,
     submit: (command) => submit(command, true),
     speakEnabled: () => voiceOutput && prefs.speakReplies,
-    speak: (text) => (trace('tts', `${text.length} chars`), speak(text, prefs.lang)),
+    speak: (text) => (trace('tts', `${text.length} chars`), speakReply(text)),
     stopSpeaking,
     chime,
     onChange: render,
@@ -474,8 +485,27 @@ export function chatView(): HTMLElement {
     sim.handsFreeChanged(handsFree);
   });
   showHandsFree();
+  // Reply voice: this browser's voices for the chosen language (female first). Saved by name, and used only
+  // when this browser has that voice; otherwise the automatic female choice (see pickVoice in voice.ts).
+  const voiceSelect = h('select', { 'aria-label': 'Reply voice' }, h('option', { value: '' }, 'Automatic (female voice)'));
+  const fillVoices = async () => {
+    const list = voicesFor(await loadVoices(), prefs.lang);
+    voiceSelect.replaceChildren(
+      h('option', { value: '' }, list.length ? 'Automatic (female voice)' : 'No voice for this language in this browser'),
+      ...list.map((v) => h('option', { value: v.name, selected: v.name === prefs.voiceName }, `${v.name.replace(/^(Microsoft|Google) /, '').replace(/ Online \(Natural\)/, '')} · ${v.lang}`)),
+    );
+  };
+  void fillVoices();
+  voiceSelect.addEventListener('change', () => {
+    if (voiceSelect.value) prefs.voiceName = voiceSelect.value;
+    else delete prefs.voiceName;
+    saveVoicePrefs(prefs);
+    if (voiceOutput) void speakReply(prefs.lang.startsWith('hi') ? 'नमस्ते, मैं फार्म असिस्ट हूँ।' : prefs.lang.startsWith('ta') ? 'வணக்கம், நான் ஃபார்ம் அசிஸ்ட்.' : 'Namaste, I am FarmAssist.');
+  });
   const language = select('Voice language', VOICE_LANGUAGES, prefs.lang, (v) => {
     prefs.lang = v;
+    delete prefs.voiceName; // a saved voice belongs to one language
+    void fillVoices();
     saveVoicePrefs(prefs);
     if (sim.isActive) {
       sim.stop(); // a recogniser keeps the language it started with
@@ -498,7 +528,7 @@ export function chatView(): HTMLElement {
   // Settings: hands-free, photo help and a new chat, out of the way of the main controls.
   const settings = h(
     'details',
-    { class: 'settings-menu' },
+    { class: 'settings-menu', ontoggle: () => void fillVoices() },
     h('summary', { 'aria-label': 'Voice and chat settings', title: 'Settings' }, icon('settings')),
     h(
       'div',
@@ -506,6 +536,7 @@ export function chatView(): HTMLElement {
       voiceInput ? handsFreeButton : null,
       h('button', { type: 'button', class: 'sim-toggle', onclick: () => camera.click() }, icon('camera'), 'Send a crop or animal photo'),
       h('button', { type: 'button', class: 'sim-toggle', onclick: () => newChat() }, icon('plus'), 'New chat'),
+      voiceOutput ? h('label', { class: 'voice-pick' }, h('span', {}, icon('volume'), 'Reply voice'), voiceSelect) : null,
     ),
   );
   const languageBox = h('label', { class: 'lang-box' }, icon('globe'), language);
