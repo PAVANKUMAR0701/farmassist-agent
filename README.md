@@ -10,15 +10,21 @@ It is built as a **self-hosted MCP server** (Model Context Protocol 2025-11-25, 
 
 ## What it does
 
+The MCP server registers 27 tools (`src/mcp/server.ts` and `src/tools/`).
+
 | Area | Examples | Tools |
 |---|---|---|
 | Expenses | "Spent 1200 on diesel", "how much on feed this month?", "no, it was 900" | `record_expense`, `list_expenses`, `get_expense_summary`, `correct_entry` (with an audit trail) |
 | Activities | "Vaccinated the brown cow" | `record_farm_activity`, `list_activities`, `get_daily_summary` |
-| Herd | "I have 4 cows: Lakshmi, Maya, Geeta and Rita", "rename Rita to Sita", "Maya was sold" | `register_animal`, `update_animal`, `list_animals` |
-| Milk | "Lakshmi gave 8 litres in the morning", "how much milk this week?" | `record_milk`, `get_milk_summary` |
-| Crops | "Planted paddy in the north field, 2 acres, 50 kg seed", "harvested 30 quintal" | `record_sowing`, `record_harvest`, `list_crops` (yield per acre, harvest vs seed) |
-| Insurance and reminders | "Lakshmi is insured with United India until 5 November", "remind me to deworm the calves" | `add_insurance`, `add_reminder`, `complete_reminder`, `list_reminders` |
+| Herd | "I have 4 cows: Lakshmi, Maya, Geeta and Rita", "rename Rita to Sita", "Maya was sold", "tell me about Lakshmi" | `register_animal`, `update_animal`, `list_animals`, `get_animal_profile` (details, mother and calves, last 7 days of milk, insurance, treatments, vaccinations) |
+| Milk | "Lakshmi gave 8 litres in the morning", "how much milk this week?", "what is today's milk worth at ₹36.5 a litre?" | `record_milk`, `get_milk_summary` (by day, by animal, or per animal per day), `get_milk_value` (litres × the farmer's rate, worked out on the server) |
+| Eggs | "How many eggs did the hens lay yesterday?" | `get_egg_summary` (per chicken per day and per day) |
+| Crops | "Planted paddy in the north field, 2 acres, 50 kg seed", "harvested 30 quintal" | `record_sowing`, `record_harvest`, `list_crops` (yield per acre, harvest vs seed, and sales, kept stock and revenue where recorded) |
+| Insurance and reminders | "Lakshmi is insured with United India until 5 November", "which insurance is overdue?", "remind me to deworm the calves" | `add_insurance`, `list_insurance` (overdue / due soon / active from the end date, days overdue, premium), `add_reminder`, `complete_reminder`, `list_reminders` |
+| Animal health | "Which animal needs a vaccination or a vet follow-up?" | `get_health_records` (treatment history, follow-ups, vaccinations due; medicine and dose only as recorded, with a note that a veterinarian decides them) |
+| Feed stock | "What feed should I reorder?" | `get_feed_stock` (reorder alert at or below the reorder level) |
 | Weekly insights | "How was my week?" | `weekly_insights` (Nova Lite wording, checked by two guards) |
+| Server check | | `health_check` (server version and today's date in the farm time zone) |
 | Photo help | 📷 a cow with lumps on the skin, or spotted paddy leaves | chat backend: Nova Lite vision plus curated reference notes |
 
 Money is stored in whole paise, milk in millilitres and mass in grams, so totals are exact. "Today" is India time. The farm comes only from the signed-in identity, never from the model.
@@ -32,8 +38,8 @@ flowchart LR
   end
   subgraph AWS["AWS account (ap-south-1)"]
     C["Chat Lambda<br/>web client + agent (MCP client)<br/>Cognito check · read-backs · guards"]
-    M["MCP Lambda<br/>21 validated tools<br/>bearer token → farm"]
-    D[("DynamoDB<br/>ledger, herd, milk, crops,<br/>reminders, conversations")]
+    M["MCP Lambda<br/>27 validated tools<br/>bearer token → farm"]
+    D[("DynamoDB<br/>ledger, herd, milk, eggs, crops, health,<br/>feed, reminders, conversations")]
     S[("S3 photos<br/>private · 90-day expiry")]
     G["Cognito<br/>sign-in"]
     P["SSM<br/>MCP token"]
@@ -76,14 +82,14 @@ These are all deterministic code, and each was added after a failure seen in tes
 
 | Part | State |
 |---|---|
-| MCP server, 21 tools, DynamoDB, auth | Deployed; smoke 19/19; concurrency and pagination verified on the real table |
+| MCP server, 27 tools, DynamoDB, auth | Deployed. Smoke 19/19 and concurrency and pagination checks on the real table (2026-10-16, before the newest tools). On 2026-10-21 the deployed server answered `initialize` with protocol 2025-11-25 and listed 27 tools |
 | Agent with Nova Lite (cross-account role) | Deployed. Evaluation 12/13 per run; the 17-message farm scenario stores 10/10 checks correctly, in memory and on the live stack |
 | Web client (sign-in, Chat, Today, Expenses, Farm, Activities) | Deployed; used on a phone |
 | Voice (English, Hindi, Tamil) with read-back | Deployed; tested on a phone with a real microphone |
 | Photo help | Deployed; tested with generated pictures and the full UI path. **Diagnostic accuracy not measured** (needs labelled farm photos) |
 | Weekly insights wording by Nova Lite | Live: deployed server returns Nova Lite wording with both guards passing (15/15 in evaluation after one retry); guarded template if Bedrock fails |
 | Nova Multimodal Embeddings for retrieval | Live (hybrid with keyword). Different-wording and Hindi/Tamil queries: hit@1 16/18 vs keyword 10/18; keyword alone if embeddings fail |
-| Alexa+ | **Not connected**: the Alexa+ developer tools are partner-only. FarmAssist is shown through its own web client. See [FRICTION.md](FRICTION.md) |
+| Alexa+ | **Not connected** to Alexa+ or any Amazon device: the Alexa+ developer tools are partner-only. For the Alexa+ track FarmAssist offers the self-hosted MCP server (2025-11-25, Streamable HTTP) and an Alexa-style voice simulator in its own web app. See [FRICTION.md](FRICTION.md) |
 
 Full history and evidence: [docs/progress.md](docs/progress.md).
 
@@ -94,7 +100,7 @@ Node.js 22 (22.19+ recommended).
 ```bash
 npm ci
 cp .env.example .env.local      # set FARMASSIST_API_TOKEN (32+ characters)
-npm test                        # 365 tests
+npm test                        # 458 tests
 npm run build:web
 npm run start:chat -- --seed    # web app on http://127.0.0.1:5173 with a sample farm (in memory, dev sign-in)
 ```

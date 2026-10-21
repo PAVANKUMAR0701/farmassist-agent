@@ -118,4 +118,39 @@ Asked for during phone testing ("add herds and name them, edit them, crops like 
 - UI: a 📷 button in Chat; any typed text goes along as the note; urgent answers get a red border; one line per part of the answer.
 - Checked: 365 tests (photo parsing, answer composition and escalation, API validation and storage failure). Live: generated pictures through Nova Lite vision, and the full UI path in the browser (lumps on skin → "Lumpy skin disease … must be reported … call the veterinarian … not a diagnosis", marked urgent).
 - **Not claimed:** diagnostic accuracy. That needs evaluation on labelled real farm photos, which this project does not have.
-## Step 9: Release readiness — not started
+
+## Web client, voice simulator and sign-up — done (2026-10-20/21)
+
+Evidence: the commit messages named below.
+
+- **Redesign** (94c3033, d56f924, 7b58149, 247d2f0, fd1fd45, 07ec9be, f58f47c): dashboard with summary tiles from real tools, an assistant panel on the left (bottom tabs on a phone), farm photo background, fixed-height layout where only content scrolls.
+- **Alexa-style voice simulator** (2c05a64, 6c04af0, 8fabd51): an orb with Ready / Listening / Processing / Speaking states and the wake word "Alexa", tap-to-talk mic, hands-free toggle (off by default), and the MCP tool calls behind each reply. This is a simulation in the web app: the screen labels it "Alexa-style simulator", and it is not connected to Alexa+ or an Amazon device (the Alexa+ tools are partner-only, see [FRICTION #1](../FRICTION.md)).
+- **Voice fixes from real Edge logs, phone tests and a browser lab** (f0e5205, 6704b9e, 0cd719d, 0bb6b33, 196bbe5, ed9c623, 04d302f): a "yes" said before the mic was capturing was lost; fillers and time words ("So.", "Today.") were sent alone at a pause; "thank you" reopened the mic; typed questions were not read aloud; Edge's natural voices were cut off by a length timeout; foreign default voices read Indian text. Each commit message describes the fix.
+- **Self sign-up** (fc245f6): "Create an account" with an email code; each signed-up user gets a private farm `u-<sub>`, reached with the user's own Cognito ID token. Admin-created users keep the farm in `custom:farmId`.
+- **Answers**: basic mode answers milk, herd, crop and reminder questions (2e75f91); per-cow milk records in answers (6704b9e); `get_milk_value` works out litres × rate on the server, and the web app runs at most 2 reads at a time because the account allows 10 concurrent Lambda runs (bcb712d).
+
+## Krishna Farm demo data and farm dashboard — done (2026-10-21)
+
+Evidence: commits 3bdf16b, 6bd5528, 14d391d, 9b3c254 and [demo-data.md](demo-data.md).
+
+- Synthetic seed `data/krishna-farm/krishna_farm_demo_seed.json` with a strict check and an idempotent import (`npm run seed-krishna-farm`, stable ids, upserts, read-back check, `*-dev`/`*-demo` tables only).
+- New record kinds (eggs, treatments, vaccinations, feed stock), the `chicken` animal type, expense categories `fertilizer`, `tractor_rent` and `crop_protection`, and the period `last_6_months`.
+- New read tools: `list_insurance`, `get_egg_summary`, `get_health_records`, `get_feed_stock`, `get_animal_profile`. Insurance and vaccination status come from the dates; medicine and dose are shown only as recorded, with a veterinarian notice.
+- Farm screen: herd with a profile per animal, milk per animal per day, eggs per chicken per day, crops with sales and kept stock, insurance to renew, animal health, feed reorder alerts and a demo-data banner. Expenses: last 6 months by month. Home: taller tiles, a 2 × 2 card grid, a new cow icon.
+- Tests: 458 in 32 files, including all six demo queries from the seed.
+- Checked in the 2026-10-21 read-only audit: the deployed server negotiated MCP 2025-11-25, listed 27 tools, returned 401 without a token, 405 for GET and 400 for an unsupported protocol version, and `weekly_insights` returned Nova Lite wording (`narrationSource: bedrock`) with the guard passing. The deployed functions run with `FARMASSIST_DEMO_FARM_ID=KRISHNA-FARM`, and the Cognito user `krishna` is confirmed with `custom:farmId` `KRISHNA-FARM`.
+- Known: the Home screen fits 1672 × 940 without scrolling; at 1366 × 768 it scrolls about 100 px with this data.
+
+## Step 9: Release readiness — in progress
+
+Done:
+- README with architecture, setup, deploy, status and the full tool table (478dc6b, updated 2026-10-21); MIT license; public repository.
+- Demo data in place on the deployed stack (see above); demo script rewritten for it ([demo-script.md](demo-script.md)).
+- Friction log ([FRICTION.md](../FRICTION.md)).
+
+Not done:
+- Demo video (under 3 minutes, public on YouTube or Vimeo).
+- Devpost submission: description, product feedback for each tool and service, track (Alexa+) and mini challenge (AWS Builder), testing instructions with demo access for judges.
+- A real-phone check of the 2026-10-21 changes (Krishna Farm screens, new Home layout).
+- `npm run agent-eval` has not been re-run since the five new read tools were added; `npm run farm-scenario` passed 10/10 on Nova Lite locally on 2026-10-21.
+- Photo help: diagnostic accuracy is still not measured.
