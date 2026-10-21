@@ -204,24 +204,6 @@ function navLinks(route: string, names: string[]): HTMLElement[] {
   });
 }
 
-/** Desktop: the assistant drawer can be hidden to give the dashboard the full width (remembered on this device). */
-const DRAWER_KEY = 'farmassist.drawer';
-let drawerClosed = (() => {
-  try {
-    return localStorage.getItem(DRAWER_KEY) === 'closed';
-  } catch {
-    return false;
-  }
-})();
-function setDrawerClosed(closed: boolean): void {
-  drawerClosed = closed;
-  try {
-    localStorage.setItem(DRAWER_KEY, closed ? 'closed' : 'open');
-  } catch {
-    /* only a convenience */
-  }
-  render();
-}
 
 /** Avatar, name and a menu with Sign out. */
 function accountMenu(user: string): HTMLElement {
@@ -271,22 +253,20 @@ function shell(): HTMLElement {
           { class: 'drawer-head' },
           h('span', { class: 'drawer-logo' }, icon('leaf')),
           h('div', { class: 'drawer-brand' }, h('strong', {}, 'FarmAssist ', h('span', {}, 'Agent')), h('span', {}, 'Your AI farm companion')),
-          h('button', { class: 'drawer-toggle', type: 'button', 'aria-label': 'Hide the assistant', title: 'Hide the assistant', onclick: () => setDrawerClosed(true) }, icon('chevronLeft')),
         ),
         assistant,
       ),
     );
     return h(
       'div',
-      { class: `app app-wide${drawerClosed ? ' drawer-closed' : ''}` },
-      drawerClosed ? null : drawer,
+      { class: 'app app-wide' },
+      drawer,
       h(
         'div',
         { class: 'main-col' },
         h('header', { class: 'topbar' }, h('nav', { class: 'topnav', 'aria-label': 'Sections' }, ...navLinks(route, ['today', 'expenses', 'farm', 'activities'])), accountMenu(user)),
         devBanner,
         h('main', { class: 'content' }, offline, ROUTES[route]!.view()),
-        drawerClosed ? h('button', { class: 'drawer-open', type: 'button', onclick: () => setDrawerClosed(false) }, icon('mic'), 'Ask FarmAssist') : null,
       ),
     );
   }

@@ -1051,3 +1051,39 @@ body { background: var(--paper); color: var(--navy); font-family: 'Segoe UI Vari
   .page-head h2, .page-head p, .date-chip, .account-name { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7); }
 }
 @media (min-width: 1180px) { .stats { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+
+/* Compact dashboard (2026-10-21): fit Home on one screen on a laptop; smaller metric tiles */
+.app-wide .topbar { padding: 14px 24px 2px; }
+.topnav a { min-height: 36px; }
+.app-wide .content { padding: 10px max(24px, calc((100% - 1240px) / 2)) 18px; }
+.view { gap: 12px; }
+.page-head h2 { font-size: 1.55rem; }
+.page-head p { font-size: 0.9rem; margin-top: 0; }
+.btn-outline { min-height: 38px; padding: 0 14px; }
+.stats { gap: 12px; }
+.stat { min-height: 0; padding: 12px 14px; border-radius: 16px; gap: 2px; }
+.stat-top { font-size: 0.64rem; }
+.stat .stat-icon { width: 28px; height: 28px; border-radius: 9px; }
+.stat .stat-icon .ico { width: 15px; height: 15px; }
+.stat-value { font-size: 1.4rem; margin-top: 6px; }
+.stat-sub { font-size: 0.76rem; }
+.stat-art .ico { width: 40px; height: 40px; }
+.dash-grid, .dash-col { gap: 12px; }
+.card { padding: 14px 18px; border-radius: 18px; }
+.card-head { margin-bottom: 8px; }
+.card-head h3 { font-size: 1rem; }
+.card-icon { width: 32px; height: 32px; border-radius: 10px; }
+.card-icon .ico { width: 17px; height: 17px; }
+.icon-rows li { padding: 7px 0; }
+.mini-icon { width: 28px; height: 28px; border-radius: 8px; }
+.mini-icon .ico { width: 15px; height: 15px; }
+.row { padding: 7px 0; }
+.row-icon { width: 30px; height: 30px; border-radius: 9px; }
+.row-icon .ico { width: 15px; height: 15px; }
+.card .big { font-size: 1.6rem; }
+.card .lines { font-size: 0.9rem; line-height: 1.5; margin-bottom: 0; }
+.verified-strip { margin-top: 8px; padding: 8px 12px; font-size: 0.84rem; }
+.card .muted.small { margin-bottom: 2px; }
+.stat { padding: 10px 12px; }
+.stat-value { font-size: 1.3rem; margin-top: 4px; }
+.app-wide .content { padding-bottom: 12px; }
