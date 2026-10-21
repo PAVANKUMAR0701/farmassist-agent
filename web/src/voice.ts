@@ -159,7 +159,10 @@ export function speakable(text: string): string {
 export function speak(text: string, lang: string): Promise<void> {
   if (!speechOutputSupported() || !text) return Promise.resolve();
   const synth = window.speechSynthesis;
-  synth.cancel(); // never talk over the previous reply
+  // Never talk over the previous reply. Cancel only when something is playing: Chrome and Edge can silently
+  // drop an utterance started in the same moment as a cancel, so give the engine a beat after one.
+  const busy = synth.speaking || synth.pending;
+  if (busy) synth.cancel();
   const utterance = new SpeechSynthesisUtterance(speakable(text));
   utterance.lang = lang;
   const voices = synth.getVoices();
@@ -172,7 +175,12 @@ export function speak(text: string, lang: string): Promise<void> {
     const done = () => (clearTimeout(limit), resolve());
     utterance.onend = done;
     utterance.onerror = done;
-    synth.speak(utterance);
+    const start = () => {
+      synth.resume(); // Chrome can leave the engine paused (e.g. after the tab was in the background)
+      synth.speak(utterance);
+    };
+    if (busy) setTimeout(start, 120);
+    else start();
   });
 }
 

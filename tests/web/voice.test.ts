@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { isEcho, plainText, speakable } from '../../web/src/voice.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isEcho, plainText, speak, speakable } from '../../web/src/voice.js';
 
 describe('speakable', () => {
   it('reads rupees, paise and dates the way a person would say them', () => {
@@ -33,3 +33,52 @@ describe('plainText', () => {
   });
 });
 
+
+describe('speak (reply read aloud)', () => {
+  /** A stand-in speech engine: records calls; an utterance "finishes" when the test says so. */
+  function fakeEngine(busy: boolean) {
+    const calls: string[] = [];
+    const spoken: Array<{ text: string; onend?: () => void }> = [];
+    const synth = {
+      speaking: busy,
+      pending: false,
+      cancel: () => calls.push('cancel'),
+      resume: () => calls.push('resume'),
+      speak: (u: { text: string; onend?: () => void }) => (calls.push(`speak:${u.text}`), spoken.push(u)),
+      getVoices: () => [],
+    };
+    class Utterance {
+      lang = '';
+      voice = null;
+      rate = 1;
+      onend?: () => void;
+      onerror?: () => void;
+      constructor(readonly text: string) {}
+    }
+    vi.stubGlobal('window', { speechSynthesis: synth });
+    vi.stubGlobal('SpeechSynthesisUtterance', Utterance);
+    return { calls, spoken };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('speaks straight away when nothing is playing (no cancel right before speak)', async () => {
+    const { calls, spoken } = fakeEngine(false);
+    const done = speak('Recorded ₹500.00 on feed.', 'en-IN');
+    expect(calls).toEqual(['resume', 'speak:Recorded 500 rupees on feed.']);
+    spoken[0]!.onend!();
+    await done;
+  });
+
+  it('when a reply is still playing, cancels it and starts the new one a moment later', async () => {
+    vi.useFakeTimers();
+    const { calls } = fakeEngine(true);
+    void speak('Okay, nothing was saved.', 'en-IN');
+    expect(calls).toEqual(['cancel']);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(calls).toEqual(['cancel', 'resume', 'speak:Okay, nothing was saved.']);
+  });
+});

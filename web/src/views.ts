@@ -278,6 +278,9 @@ export function chatView(): HTMLElement {
       }
       pending.remove();
       showReply(reply);
+      // "Voice replies on" means every reply is read aloud, typed or tapped too (spoken ones are read by the
+      // simulator itself). say() closes the mic while speaking so the reply is never heard as a command.
+      if (!spoken && voiceOutput && prefs.speakReplies) void sim.say(reply.reply);
       return reply;
     } catch (error) {
       pending.remove();
@@ -388,7 +391,7 @@ export function chatView(): HTMLElement {
       pending.remove();
       const box = bubble('bot', answer.urgent ? badge('Needs attention', 'danger') : null, h('p', { class: 'lines' }, answer.reply));
       if (answer.urgent) box.classList.add('urgent');
-      if (sim.isActive) void sim.say(answer.reply); // read aloud only for a farmer already using voice
+      void sim.say(answer.reply); // read aloud when voice replies are on
     } catch (error) {
       pending.remove();
       bubble('bot', notice('error', errorText(error)));
