@@ -6,7 +6,7 @@ import { ApiError, readTool, sendChat, sendPhoto, type ChatReply } from './api.j
 import { shrinkPhoto } from './photo.js';
 import { append, badge, clear, h, icon, label, notice, pageHeader, shortDate, spinner, type IconName } from './dom.js';
 import { VoiceSimulator, type SimState, type SimView } from './simulator.js';
-import { createRecognition, loadVoicePrefs, saveVoicePrefs, speak, speechInputSupported, speechOutputSupported, stopSpeaking, VOICE_LANGUAGES } from './voice.js';
+import { createRecognition, plainText, loadVoicePrefs, saveVoicePrefs, speak, speechInputSupported, speechOutputSupported, stopSpeaking, VOICE_LANGUAGES } from './voice.js';
 
 const CATEGORIES = ['feed', 'fodder', 'medicine', 'labour', 'fuel', 'equipment', 'seed', 'other'];
 const ACTIVITY_TYPES = ['milking', 'vaccination', 'sowing', 'harvesting', 'irrigation', 'other'];
@@ -238,7 +238,7 @@ export function chatView(): HTMLElement {
         h('button', { type: 'button', class: 'secondary', onclick: () => void answer('no') }, 'No'),
       );
     }
-    bubble('bot', h('p', { class: 'lines' }, reply.reply), buttons, mode);
+    bubble('bot', h('p', { class: 'lines' }, plainText(reply.reply)), buttons, mode);
   };
 
   /** Sends one message and shows the reply. `spoken` marks voice: the backend then reads changes back first. */

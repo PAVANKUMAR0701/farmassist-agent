@@ -53,7 +53,13 @@ const ISO_DATE = /\b(\d{4}-\d{2}-\d{2})\b/;
 const QUANTITY = /\d[\d,.]*\s*(?:quintals?|qtls?|kgs?|kilos?|kilograms?|grams?|litres?|liters?|ltrs?|acres?|guntha|tonnes?|tons?)\b/;
 const MONEY = /₹|\brs\b|\brupees?\b|\binr\b|\brupaye\b/;
 export const BASIC_MODE_RECORDS =
-  'In basic mode I can record expenses and activities only. Milk, crops and the herd need the AI assistant, which is not answering right now. Please try again in a moment.';
+  'In basic mode I can record expenses and activities only. Recording milk, crops and the herd needs the AI assistant, which is not answering right now. Please try again in a moment.';
+
+/**
+ * A request for information, not something to record: "give me the list of…", "show…", "how much…", or a
+ * trailing "?". Without this, "give me today's milk" was read back as "Shall I record milking?" (seen 2026-10-21).
+ */
+const QUESTION = /^(give|show|list|tell|what|which|who|how|get|display|see|view|check|can you (give|show|tell))\b|\b(list of|how much|how many|kitna|kitne)\b|\?\s*$/;
 /** An amount: digits with optional Indian/Western grouping and up to 2 decimals, optionally marked as rupees. */
 const AMOUNT = /(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*(?:rupees|rs\b|₹)?/;
 
@@ -130,7 +136,7 @@ export function decideFallback(message: string, context: FallbackContext, today:
   }
 
   // 4. Spending questions: "how much on feed this month", "total spent last month".
-  if (/\b(how much|total|kitna|spent so far|spending on)\b/.test(text) && !/\b(paid|bought)\b/.test(text)) {
+  if (/\b(how much|total|kitna|spent so far|spending on)\b/.test(text) && !/\b(paid|bought|milk)\b/.test(text)) {
     return { kind: 'tool', name: 'get_expense_summary', args: { period: period ?? 'this_month', ...(category ? { category } : {}) } };
   }
 
@@ -139,9 +145,17 @@ export function decideFallback(message: string, context: FallbackContext, today:
     return { kind: 'tool', name: 'list_expenses', args: { period: period ?? 'this_month', ...(category ? { category } : {}), limit: 20 } };
   }
 
-  // 6. Farm activities (no money involved).
+  // 6. Questions about milk, the herd, crops and what is due: read-only lookups, never a write.
+  if (QUESTION.test(text)) {
+    if (/\bmilk\b/.test(text)) return { kind: 'tool', name: 'get_milk_summary', args: { period: period ?? 'today', groupBy: 'animal' } };
+    if (/\b(remind(ers?)?|due|coming up|tasks?|insurance)\b/.test(text)) return { kind: 'tool', name: 'list_reminders', args: { daysAhead: 30 } };
+    if (/\bcrops?\b|\b(paddy|ragi|sugarcane|fields?)\b/.test(text)) return { kind: 'tool', name: 'list_crops', args: {} };
+    if (/\b(cows?|animals?|herd|cattle|buffalo(es)?|calf|calves|goats?|sheep)\b/.test(text)) return { kind: 'tool', name: 'list_animals', args: {} };
+  }
+
+  // 7. Farm activities (no money involved). A question is never recorded as an activity.
   const activity = firstMatch(ACTIVITY_WORDS, text);
-  if (activity && amount === undefined) {
+  if (activity && amount === undefined && !QUESTION.test(text)) {
     const animalOrField = findSubject(original.replace(/\s+/g, ' '), ACTIVITY_WORDS.find(([type]) => type === activity)![1]);
     return {
       kind: 'tool',
@@ -150,7 +164,7 @@ export function decideFallback(message: string, context: FallbackContext, today:
     };
   }
 
-  // 7. Expenses: "spent 2500 on feed", "paid ₹800 for medicine", "bought diesel 1200".
+  // 8. Expenses: "spent 2500 on feed", "paid ₹800 for medicine", "bought diesel 1200".
   if (amount !== undefined) {
     if (!category) return { kind: 'reply', text: `What was the ₹${amount} for? For example feed, fodder, medicine, labour, fuel, equipment or seed.` };
     return { kind: 'tool', name: 'record_expense', args: { amountRupees: amount, category, note, ...dateArg(text, today) } };

@@ -135,9 +135,18 @@ export function isEcho(heard: string, lastSpoken: string): boolean {
   return h.split(' ').length >= 3 && words(speakable(lastSpoken)).includes(h);
 }
 
+/** Model replies sometimes use Markdown ("**Geeta**", " - item"): show and say them as plain text. */
+export function plainText(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|[.,!?]|$)/g, '$1$2')
+    .replace(/\s+-\s+(?=\S)/g, '\n• ')
+    .trim();
+}
+
 /** Rewrites a reply so it sounds natural: "₹2,500.00" -> "2,500 rupees", "2026-10-14" -> "14 October 2026". */
 export function speakable(text: string): string {
-  return text
+  return plainText(text)
     .replace(/₹\s?([\d,]+)\.(\d{2})/g, (_m, whole: string, paise: string) => (paise === '00' ? `${whole} rupees` : `${whole} rupees ${Number(paise)} paise`))
     .replace(/₹\s?([\d,]+)/g, '$1 rupees')
     .replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_m, y: string, mo: string, d: string) =>

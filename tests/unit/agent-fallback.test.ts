@@ -82,3 +82,23 @@ it('never mistakes a quantity for money (live: "30 quintal of paddy" became "Wha
   // Money is still money, even with a quantity in the sentence.
   expect(decide('spent ₹1,200 on 50 kg of cattle feed')).toMatchObject({ kind: 'tool', name: 'record_expense', args: { amountRupees: 1200, category: 'feed' } });
 });
+
+describe('deterministic fallback: questions about milk, the herd, crops and reminders (seen live 2026-10-21)', () => {
+  it('a milk question looks up milk, it is never recorded as milking', () => {
+    expect(decide('Give me a list of cows milk.')).toEqual({ kind: 'tool', name: 'get_milk_summary', args: { period: 'today', groupBy: 'animal' } });
+    expect(decide("Give me today's list of all milk produced by all cows.")).toEqual({ kind: 'tool', name: 'get_milk_summary', args: { period: 'today', groupBy: 'animal' } });
+    expect(decide('How much milk this week?')).toEqual({ kind: 'tool', name: 'get_milk_summary', args: { period: 'this_week', groupBy: 'animal' } });
+    expect(decide('show milk last 7 days')).toMatchObject({ name: 'get_milk_summary', args: { period: 'last_7_days' } });
+  });
+  it('herd, crop and reminder questions use the read-only tools', () => {
+    expect(decide('show my cows')).toEqual({ kind: 'tool', name: 'list_animals', args: {} });
+    expect(decide('how many animals do I have?')).toEqual({ kind: 'tool', name: 'list_animals', args: {} });
+    expect(decide('show my active crops')).toEqual({ kind: 'tool', name: 'list_crops', args: {} });
+    expect(decide('what farm tasks are due?')).toEqual({ kind: 'tool', name: 'list_reminders', args: { daysAhead: 30 } });
+  });
+  it('statements are still recorded, and spending questions still go to expenses', () => {
+    expect(decide('milked Lakshmi this morning')).toMatchObject({ name: 'record_farm_activity', args: { activityType: 'milking' } });
+    expect(decide('How much did I spend today?')).toMatchObject({ name: 'get_expense_summary', args: { period: 'today' } });
+    expect(decide('show expenses this week')).toMatchObject({ name: 'list_expenses' });
+  });
+});

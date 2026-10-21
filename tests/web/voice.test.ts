@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isEcho, speakable } from '../../web/src/voice.js';
+import { isEcho, plainText, speakable } from '../../web/src/voice.js';
 
 describe('speakable', () => {
   it('reads rupees, paise and dates the way a person would say them', () => {
@@ -22,3 +22,14 @@ describe('isEcho', () => {
     expect(isEcho('spent 600 on fuel', question)).toBe(false);
   });
 });
+
+describe('plainText', () => {
+  it('shows and speaks Markdown from the model as plain text (seen live 2026-10-21)', () => {
+    expect(plainText('Milk for each cow: - **Geeta**: No milk recorded. - **Lakshmi**: 104.5 litres.')).toBe('Milk for each cow:\n• Geeta: No milk recorded.\n• Lakshmi: 104.5 litres.');
+    expect(speakable('**Lakshmi** gave ₹2,500.00')).toBe('Lakshmi gave 2,500 rupees');
+  });
+  it('leaves ordinary text alone, including dates and negative-looking ranges', () => {
+    expect(plainText('From 2026-10-14 to 2026-10-20 you spent ₹3,700.00.')).toBe('From 2026-10-14 to 2026-10-20 you spent ₹3,700.00.');
+  });
+});
+
