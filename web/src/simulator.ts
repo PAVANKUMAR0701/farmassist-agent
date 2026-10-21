@@ -82,7 +82,11 @@ const RESTART_DELAY_MS = 250;
  * Words that start a sentence but are not a request on their own. Seen in a real Edge log (2026-10-21):
  * "So." was finalised at a natural pause and sent, and the farmer had to say the whole question again.
  */
-const FILLERS = new Set(['so', 'okay', 'ok', 'um', 'uh', 'umm', 'hmm', 'and', 'well', 'then', 'also', 'actually', 'acha', 'accha', 'haan', 'ji']);
+const FILLERS = new Set([
+  ...['so', 'okay', 'ok', 'um', 'uh', 'umm', 'hmm', 'and', 'well', 'then', 'also', 'actually', 'acha', 'accha', 'haan', 'ji'],
+  // A time word or "please" alone is the start of a request ("Today." was sent alone, seen live 2026-10-21).
+  ...['today', 'yesterday', 'tomorrow', 'now', 'please', 'aaj', 'kal', 'abhi'],
+]);
 const isFillerOnly = (command: string) => {
   const words = command.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
   return words.length > 0 && words.every((w) => FILLERS.has(w));

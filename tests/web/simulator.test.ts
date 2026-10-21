@@ -494,6 +494,18 @@ describe('VoiceSimulator', () => {
       expect(deps.submit).toHaveBeenCalledExactlyOnceWith('So. what is the total production of the milk today?');
     });
 
+    it('"Today." alone is held; the rest of the sentence joins it (seen live 2026-10-21)', async () => {
+      const { sim, mic, deps } = setup(undefined, true, false);
+      sim.talk();
+      mic().audioStart();
+      mic().hear('Today.');
+      await vi.advanceTimersByTimeAsync(3200); // the pause in the real log
+      expect(deps.submit).not.toHaveBeenCalled();
+      mic().hear('Today. I spent 5000 for fuel.');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(deps.submit).toHaveBeenCalledExactlyOnceWith('Today. I spent 5000 for fuel.');
+    });
+
     it('filler alone, then nothing: the mic turns off without sending anything', async () => {
       const { sim, mic, deps } = setup(undefined, true, false);
       sim.talk();
