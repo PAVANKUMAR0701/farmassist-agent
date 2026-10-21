@@ -48,6 +48,7 @@ describe('MCP client', () => {
         'get_daily_summary',
         'get_expense_summary',
         'get_milk_summary',
+        'get_milk_value',
         'health_check',
         'list_activities',
         'list_animals',

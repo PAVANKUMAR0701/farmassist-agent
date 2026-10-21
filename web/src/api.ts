@@ -278,9 +278,37 @@ export function sendChat(message: string, conversationId?: string, voice = false
   return post<ChatReply>('/api/chat', { message, ...(conversationId ? { conversationId } : {}), ...(voice ? { voice: true } : {}) });
 }
 
+/**
+ * Read requests in flight at once. Each read runs two Lambda functions (chat, then MCP), and the AWS account
+ * allows 10 concurrent runs in total: six dashboard cards at once were throttled and showed "Could not load"
+ * (seen live 2026-10-21).
+ */
+const MAX_PARALLEL_READS = 2;
+let readsInFlight = 0;
+const readQueue: Array<() => void> = [];
+async function readSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (readsInFlight >= MAX_PARALLEL_READS) await new Promise<void>((resolve) => readQueue.push(resolve));
+  readsInFlight++;
+  try {
+    return await run();
+  } finally {
+    readsInFlight--;
+    readQueue.shift()?.();
+  }
+}
+
 /** Calls a read-only MCP tool. `data` is the tool's structured result, exactly as the server computed it. */
 export function readTool<T = Record<string, unknown>>(tool: string, args: Record<string, unknown> = {}): Promise<{ text: string; data: T }> {
-  return post<{ text: string; data: T }>('/api/read', { tool, args });
+  return readSlot(async () => {
+    try {
+      return await post<{ text: string; data: T }>('/api/read', { tool, args });
+    } catch (error) {
+      // Busy backend (throttled): one quiet retry. Reads change nothing, so retrying is safe.
+      if (!(error instanceof ApiError) || ![429, 502, 503].includes(error.status)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      return post<{ text: string; data: T }>('/api/read', { tool, args });
+    }
+  });
 }
 
 export interface PhotoReply {

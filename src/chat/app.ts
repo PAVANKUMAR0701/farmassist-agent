@@ -59,6 +59,7 @@ export const READ_TOOLS = new Set([
   'weekly_insights',
   'list_animals',
   'get_milk_summary',
+  'get_milk_value',
   'list_crops',
   'list_reminders',
 ]);

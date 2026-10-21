@@ -60,6 +60,8 @@ export const BASIC_MODE_RECORDS =
  * trailing "?". Without this, "give me today's milk" was read back as "Shall I record milking?" (seen 2026-10-21).
  */
 const QUESTION = /^(give|show|list|tell|what|which|who|how|get|display|see|view|check|can you (give|show|tell))\b|\b(list of|how much|how many|kitna|kitne)\b|\?\s*$/;
+/** A rate in rupees: the number next to ₹ / rs / rupees ("18 litres at ₹36.5" -> 36.5, not 18). */
+const RATE = /(?:₹|\brs\.?)\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(?:rupees?|rs\b)/;
 /** An amount: digits with optional Indian/Western grouping and up to 2 decimals, optionally marked as rupees. */
 const AMOUNT = /(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*(?:rupees|rs\b|₹)?/;
 
@@ -143,6 +145,16 @@ export function decideFallback(message: string, context: FallbackContext, today:
   // 5. Lists: "show expenses this week", "list feed expenses".
   if (/\b(show|list|see|view)\b/.test(text) && /\b(expenses?|spending|payments?|entries)\b/.test(text)) {
     return { kind: 'tool', name: 'list_expenses', args: { period: period ?? 'this_month', ...(category ? { category } : {}), limit: 20 } };
+  }
+
+  // 6a. Money value of milk at the farmer's rate: worked out by the server (get_milk_value), never here.
+  if (/\bmilk\b/.test(text) && /\b(rupees?|rs|amount|value|worth|price|rate|income|earn(ed|ing)?|calculate)\b|₹/.test(text)) {
+    const rate = RATE.exec(text.replace(ISO_DATE, ' '));
+    const value = rate ? Number(rate[1] ?? rate[2]) : undefined;
+    if (value && value > 0 && value <= 1000) return { kind: 'tool', name: 'get_milk_value', args: { period: period ?? 'today', ratePerLitreRupees: value } };
+    if (QUESTION.test(text) || /\b(calculate|amount|value|worth)\b/.test(text)) {
+      return { kind: 'reply', text: 'At what price per litre? For example: "today\'s milk at 36.5 rupees a litre".' };
+    }
   }
 
   // 6. Questions about milk, the herd, crops and what is due: read-only lookups, never a write.

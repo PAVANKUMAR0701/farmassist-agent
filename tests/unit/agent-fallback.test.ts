@@ -102,3 +102,15 @@ describe('deterministic fallback: questions about milk, the herd, crops and remi
     expect(decide('show expenses this week')).toMatchObject({ name: 'list_expenses' });
   });
 });
+
+describe('deterministic fallback: rupee value of milk (seen live 2026-10-21)', () => {
+  it('a rate goes to the server calculation, never to an expense', () => {
+    expect(decide('Calculate a total milk produced for today with the rupees of ₹36.5.')).toEqual({ kind: 'tool', name: 'get_milk_value', args: { period: 'today', ratePerLitreRupees: 36.5 } });
+    expect(decide('value of milk this week at 40 rupees per litre')).toEqual({ kind: 'tool', name: 'get_milk_value', args: { period: 'this_week', ratePerLitreRupees: 40 } });
+    expect(decide('18 litres of milk at ₹36.5')).toMatchObject({ name: 'get_milk_value', args: { ratePerLitreRupees: 36.5 } });
+  });
+  it('without a rate it asks for one instead of guessing', () => {
+    expect(decide("What is the total amount in rupees for today's milk production?")).toEqual({ kind: 'reply', text: 'At what price per litre? For example: "today\'s milk at 36.5 rupees a litre".' });
+  });
+});
+

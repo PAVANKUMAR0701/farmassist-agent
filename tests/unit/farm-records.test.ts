@@ -124,6 +124,31 @@ describe('milk', () => {
     expect(none.structuredContent).not.toHaveProperty('records');
   });
 
+  it("works out the rupee value of the milk at the farmer's rate, exactly, in the server (seen live 2026-10-21)", async () => {
+    const { config } = makeTestConfig();
+    await ok(callTool(config, 'register_animal', { animals: [{ name: 'Geeta', type: 'cow' }, { name: 'Maya', type: 'cow' }, { name: 'Lakshmi', type: 'cow' }] }));
+    await ok(callTool(config, 'record_milk', { litres: 7, session: 'whole_day', animalName: 'Geeta' }));
+    await ok(callTool(config, 'record_milk', { litres: 6, session: 'whole_day', animalName: 'Maya' }));
+    await ok(callTool(config, 'record_milk', { litres: 5, session: 'whole_day', animalName: 'Lakshmi' }));
+
+    // Hand-calculated: 18 L x ₹36.50 = ₹657.00; Geeta 7 x 36.5 = 255.50, Maya 219.00, Lakshmi 182.50.
+    const value = await ok(callTool(config, 'get_milk_value', { ratePerLitreRupees: 36.5 }));
+    expect(value.content[0]!.text.split('\n')[0]).toBe(
+      'Milk from 2026-10-14 to 2026-10-14: 18 L at ₹36.50 per litre = ₹657.00. By animal: Geeta 7 L = ₹255.50, Maya 6 L = ₹219.00, Lakshmi 5 L = ₹182.50.',
+    );
+    expect(value.structuredContent).toMatchObject({ valuePaise: 65700, valueDisplay: '₹657.00', calculatedBy: 'server' });
+
+    // Litres with millilitres and a rate with paise: 7.25 L x ₹33.33 = ₹241.6425 -> ₹241.64 (rounded once).
+    await ok(callTool(config, 'record_milk', { litres: 7.25, session: 'morning', animalName: 'Geeta', date: '2026-10-13' }));
+    const yesterday = await ok(callTool(config, 'get_milk_value', { period: 'yesterday', ratePerLitreRupees: 33.33 }));
+    expect(yesterday.structuredContent).toMatchObject({ valuePaise: 24164, valueDisplay: '₹241.64' });
+
+    const none = await ok(callTool(config, 'get_milk_value', { from: '2026-10-01', to: '2026-10-02', ratePerLitreRupees: 36.5 }));
+    expect(none.content[0]!.text.split('\n')[0]).toBe('No milk recorded from 2026-10-01 to 2026-10-02, so there is nothing to value.');
+    expect((await callTool(config, 'get_milk_value', { ratePerLitreRupees: 0 })).isError).toBe(true);
+    expect((await callTool(config, 'get_milk_value', { ratePerLitreRupees: 36.555 })).isError).toBe(true);
+  });
+
   it('refuses milk for an animal that is not registered, and impossible amounts', async () => {
     const { config } = makeTestConfig();
     expect((await callTool(config, 'record_milk', { litres: 5, animalName: 'Ghost' })).content[0]!.text).toContain('no animals are registered yet');
