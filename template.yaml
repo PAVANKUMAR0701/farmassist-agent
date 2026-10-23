@@ -76,6 +76,21 @@ Parameters:
       'nova' adds Amazon Nova Multimodal Embeddings (us-east-1) to photo-help retrieval, through AgentBedrockRoleArn.
       Needs a built vector index and the model allowed for that role. 'off' uses keyword search only.
 
+  CustomDomainName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional domain for the web client, e.g. farmassist.mobil80.com. Empty serves it on the Function URL only.
+      Needs CustomDomainCertificateArn and CustomDomainHostedZoneId.
+  CustomDomainCertificateArn:
+    Type: String
+    Default: ''
+    Description: ACM certificate for CustomDomainName. CloudFront requires it to be in us-east-1.
+  CustomDomainHostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route 53 public hosted zone that holds CustomDomainName.
+
 Conditions:
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
   HasAgentModel: !Not [!Equals [!Ref AgentModelId, '']]
@@ -86,6 +101,7 @@ Conditions:
   HasBedrockRole: !Not [!Equals [!Ref BedrockRoleArn, '']]
   UsesBedrockInThisAccount: !And [!Condition HasBedrockModel, !Not [!Condition HasBedrockRole]]
   UsesBedrockRole: !And [!Condition HasBedrockModel, !Condition HasBedrockRole]
+  HasCustomDomain: !Not [!Equals [!Ref CustomDomainName, '']]
 
 Resources:
   LedgerTable:
@@ -389,10 +405,71 @@ Resources:
         Banner:
           - js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
+  # ---- Custom domain for the web client --------------------------------------------------------------
+
+  # Function URLs cannot take a custom domain, so CloudFront fronts the chat function. Nothing is cached, and
+  # every header except Host is forwarded (the Function URL only answers to its own host name).
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: HasCustomDomain
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub FarmAssist web client (${StageName})
+        Aliases: [!Ref CustomDomainName]
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_200
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CustomDomainCertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: chat-function
+            DomainName: !Select [2, !Split ['/', !GetAtt ChatFunctionUrl.FunctionUrl]]
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              # Matches the function timeout (a chat turn can take several model round trips).
+              OriginReadTimeout: 30
+        DefaultCacheBehavior:
+          TargetOriginId: chat-function
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+
+  WebDomainRecordIPv4:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCustomDomain
+    Properties:
+      HostedZoneId: !Ref CustomDomainHostedZoneId
+      Name: !Ref CustomDomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt WebDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2 # CloudFront's fixed zone for alias records
+
+  WebDomainRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCustomDomain
+    Properties:
+      HostedZoneId: !Ref CustomDomainHostedZoneId
+      Name: !Ref CustomDomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt WebDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
 Outputs:
   WebAppUrl:
     Description: The FarmAssist web client (sign in with a Cognito user, see README)
     Value: !GetAtt ChatFunctionUrl.FunctionUrl
+  CustomDomainUrl:
+    Condition: HasCustomDomain
+    Description: The web client on the custom domain
+    Value: !Sub https://${CustomDomainName}/
   UserPoolId:
     Value: !Ref UserPool
   UserPoolClientId:

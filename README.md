@@ -134,6 +134,8 @@ You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-mo
    aws cognito-idp admin-create-user --region ap-south-1 --user-pool-id <UserPoolId> --username <name> --user-attributes Name=name,Value="<Display name>" Name=custom:farmId,Value=KRISHNA-FARM --temporary-password "<temporary password>" --message-action SUPPRESS
    ```
 
+   Optional custom domain: add `CustomDomainName=<domain> CustomDomainCertificateArn=<us-east-1 ACM cert ARN> CustomDomainHostedZoneId=<Route 53 zone id>` to the overrides. CloudFront then fronts the web client and Route 53 points the domain at it (the demo runs at https://farmassist.mobil80.com/).
+
 4. **Check it.** Open the `WebAppUrl` output, and run the checks below against the `McpEndpoint` output.
 
 ## Demo data: Krishna Farm
